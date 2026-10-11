@@ -194,7 +194,13 @@
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
       observations = payload.observations || [];
       renderObservationList();
-      const timelineResponse = await fetch(`${apiBase}/api/earthdata/timeline?collection=${encodeURIComponent($('collectionSelect').value)}`);
+      const timelineParams = new URLSearchParams({ collection: $('collectionSelect').value });
+      if (body.start) timelineParams.set('start', body.start);
+      if (body.end) timelineParams.set('end', body.end);
+      if (body.bbox) {
+        Object.entries(body.bbox).forEach(([key, value]) => timelineParams.set(key, value));
+      }
+      const timelineResponse = await fetch(`${apiBase}/api/earthdata/timeline?${timelineParams}`);
       const timeline = timelineResponse.ok ? await timelineResponse.json() : payload.timeline || {};
       renderTimeline(timeline);
       ['earlierSelect', 'laterSelect'].forEach((id) => {

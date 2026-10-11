@@ -84,6 +84,26 @@ def test_archive_search_returns_empty_timeline(monkeypatch) -> None:
     assert result["inventory_complete"] is True
 
 
+def test_timeline_preserves_spatial_and_temporal_filters(monkeypatch) -> None:
+    captured = {}
+
+    def fake_discover(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(backend, "discover_gcov", fake_discover)
+    response = TestClient(backend.app).get(
+        "/api/earthdata/timeline"
+        "?collection=NISAR_L2_GCOV_PROVISIONAL_V1"
+        "&start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z"
+        "&west=88&south=20.5&east=92.7&north=26.7"
+    )
+    assert response.status_code == 200
+    assert captured["bounding_box"] == (88.0, 20.5, 92.7, 26.7)
+    assert captured["start"].startswith("2026-01-01")
+    assert captured["end"].startswith("2026-02-01")
+
+
 def test_search_validates_bbox_and_date_order() -> None:
     client = TestClient(backend.app)
     response = client.post(

@@ -238,8 +238,23 @@ def archive_search(
 @app.get("/api/earthdata/timeline")
 def earthdata_timeline(
     collection: str = Query(default="NISAR_L2_GCOV_PROVISIONAL_V1"),
+    start: datetime | None = None,
+    end: datetime | None = None,
+    west: float | None = Query(default=None, ge=-180, le=180),
+    south: float | None = Query(default=None, ge=-90, le=90),
+    east: float | None = Query(default=None, ge=-180, le=180),
+    north: float | None = Query(default=None, ge=-90, le=90),
 ) -> dict[str, Any]:
-    request = ObservationSearch(collection=collection, count=100)
+    bbox = None
+    bbox_values = (west, south, east, north)
+    if any(value is not None for value in bbox_values):
+        if any(value is None for value in bbox_values):
+            raise HTTPException(status_code=422, detail="west, south, east, and north are all required")
+        bbox = BBox(west=west, south=south, east=east, north=north)
+    try:
+        request = ObservationSearch(collection=collection, start=start, end=end, bbox=bbox, count=100)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     payload = _search_payload(request, page=1, page_size=CATALOG_RESULT_CAP)
     all_observations = [
         Observation.model_validate(item) for item in payload["observations"]
