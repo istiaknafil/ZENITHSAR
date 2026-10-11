@@ -198,6 +198,24 @@ def _safe_product_path(product_id: str) -> Path:
     return candidate
 
 
+def _validated_optional_bbox(
+    west: float | None,
+    south: float | None,
+    east: float | None,
+    north: float | None,
+) -> tuple[float, float, float, float] | None:
+    values = (west, south, east, north)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise HTTPException(status_code=422, detail="west, south, east, and north are all required")
+    try:
+        bbox = BBox(west=west, south=south, east=east, north=north)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return bbox.west, bbox.south, bbox.east, bbox.north
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "earthchange-api"}
@@ -291,7 +309,12 @@ def stream_observations(
     frequency: str = Query(default="frequencyA", pattern=r"^frequency[A-Z]$"),
     polarization: str = Query(default="HH", pattern=r"^(HH|HV|VH|VV)$"),
     threshold_db: float = Query(default=3.0, ge=0),
+    west: float | None = Query(default=None, ge=-180, le=180),
+    south: float | None = Query(default=None, ge=-90, le=90),
+    east: float | None = Query(default=None, ge=-180, le=180),
+    north: float | None = Query(default=None, ge=-90, le=90),
 ) -> dict[str, Any]:
+    bbox = _validated_optional_bbox(west, south, east, north)
     if not 1 <= len(observation_ids) <= MAX_GRANULES:
         raise HTTPException(status_code=422, detail=f"select between 1 and {MAX_GRANULES} granules")
     missing = [item for item in observation_ids if item not in app.state.observations]
@@ -314,6 +337,7 @@ def stream_observations(
                     frequency=frequency,
                     polarization=polarization,
                     threshold_db=threshold_db,
+                    bbox=bbox,
                 )
             )
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
@@ -337,7 +361,12 @@ def change_observations(
     frequency: str = Query(default="frequencyA", pattern=r"^frequency[A-Z]$"),
     polarization: str = Query(default="HH", pattern=r"^(HH|HV|VH|VV)$"),
     threshold_db: float = Query(default=3.0, ge=0),
+    west: float | None = Query(default=None, ge=-180, le=180),
+    south: float | None = Query(default=None, ge=-90, le=90),
+    east: float | None = Query(default=None, ge=-180, le=180),
+    north: float | None = Query(default=None, ge=-90, le=90),
 ) -> dict[str, Any]:
+    bbox = _validated_optional_bbox(west, south, east, north)
     if len(observation_ids) != 2 or observation_ids[0] == observation_ids[1]:
         raise HTTPException(status_code=422, detail="select exactly two different observations")
     missing = [item for item in observation_ids if item not in app.state.observations]
@@ -360,6 +389,7 @@ def change_observations(
             frequency=frequency,
             polarization=polarization,
             threshold_db=threshold_db,
+            bbox=bbox,
         )
     except (ImportError, OSError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"change processing failed: {exc}") from exc

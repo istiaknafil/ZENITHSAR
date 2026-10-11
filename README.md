@@ -152,6 +152,13 @@ confirmed environmental cause. Until real coordinate and projection metadata
 has been validated for the opened product, the result is a preview and is not
 presented as a georeferenced map raster.
 
+When a bounding box is supplied, the streamer uses the ASF NISAR Cookbook
+coordinate-window pattern: it reads the GCOV grid coordinates and projection,
+transforms the EPSG:4326 AOI to the product CRS, and requests only the
+intersecting HDF5 window. The Cookbook checkout under
+`.references/NISAR_Cookbook` is an ignored implementation reference; its
+notebooks are not copied into the production frontend.
+
 If the product metadata includes a numeric EPSG attribute and matching coordinate
 bounds for both products, the frontend transforms those bounds to Web Mercator
 and adds the derived PNG as a toggleable, opacity-controlled OpenLayers image

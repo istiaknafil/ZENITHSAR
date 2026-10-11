@@ -279,6 +279,10 @@
         polarization: $('polarizationSelect').value || 'HH',
         threshold_db: $('thresholdInput').value || '3',
       });
+      const bboxValues = $('bboxInput').value.split(',').map(Number);
+      if (bboxValues.length === 4 && bboxValues.every(Number.isFinite)) {
+        ['west', 'south', 'east', 'north'].forEach((key, index) => params.set(key, bboxValues[index]));
+      }
       const endpoint = selected.length === 2 ? '/api/earthdata/change' : '/api/earthdata/stream';
       const response = await fetch(`${apiBase}${endpoint}?${params}`, {
         method: 'POST',

@@ -10,3 +10,4 @@ earthaccess>=0.14
 h5py>=3.10
 fsspec>=2024.2
 aiohttp>=3.9
+pyproj>=3.6

@@ -197,10 +197,42 @@ def _read_power_overview(dataset: Any) -> tuple[np.ndarray, dict[str, Any]]:
     }
 
 
+def _coordinate_window(product: Any, dataset_path: str, bbox: tuple[float, float, float, float] | None) -> tuple[slice, slice, dict[str, Any]]:
+    if bbox is None:
+        return slice(None), slice(None), {}
+    import pyproj
+
+    group_path = dataset_path.rsplit("/", 1)[0]
+    group = product[group_path]
+    if "xCoordinates" not in group or "yCoordinates" not in group or "projection" not in group:
+        raise ValueError("selected GCOV grid has no xCoordinates, yCoordinates, and projection datasets")
+    x = np.asarray(group["xCoordinates"][:])
+    y = np.asarray(group["yCoordinates"][:])
+    epsg_value = _json_value(group["projection"][()])
+    epsg = int(epsg_value)
+    transformer = pyproj.Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+    west, south, east, north = bbox
+    x0, y0 = transformer.transform(west, south)
+    x1, y1 = transformer.transform(east, north)
+    x_indices = np.where((x >= min(x0, x1)) & (x <= max(x0, x1)))[0]
+    y_indices = np.where((y >= min(y0, y1)) & (y <= max(y0, y1)))[0]
+    if not x_indices.size or not y_indices.size:
+        raise ValueError("requested AOI does not overlap the selected NISAR grid")
+    y_slice = slice(int(y_indices.min()), int(y_indices.max()) + 1)
+    x_slice = slice(int(x_indices.min()), int(x_indices.max()) + 1)
+    return y_slice, x_slice, {
+        "epsg": epsg,
+        "x_range": [float(x[x_slice][0]), float(x[x_slice][-1])],
+        "y_range": [float(y[y_slice][0]), float(y[y_slice][-1])],
+        "source_bbox": list(bbox),
+    }
+
+
 def _open_dataset_overview(
     granule: Any,
     frequency: str,
     polarization: str,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], int]:
     import earthaccess
     import h5py
@@ -217,10 +249,26 @@ def _open_dataset_overview(
                 raise ValueError(
                     f"no {frequency} {polarization} GCOV dataset was found"
                 )
-            power, details = _read_power_overview(product[paths[0]])
+            y_slice, x_slice, aoi_details = _coordinate_window(product, paths[0], bbox)
+            dataset = product[paths[0]]
+            if y_slice.start is None and y_slice.stop is None and x_slice.start is None and x_slice.stop is None:
+                power, details = _read_power_overview(dataset)
+            else:
+                window = np.asarray(dataset[y_slice, x_slice], dtype=np.float32)
+                valid = np.isfinite(window) & (window > 0)
+                if not np.any(valid):
+                    raise ValueError("selected AOI contains no positive finite power samples")
+                power = window
+                details = {
+                    "shape": list(dataset.shape),
+                    "chunks": list(dataset.chunks) if dataset.chunks else None,
+                    "stride": 1,
+                    "valid_pixels": int(np.count_nonzero(valid)),
+                }
             details["dataset_paths"] = paths
             details["selected_dataset"] = paths[0]
             details["georeferencing"] = _discover_georeferencing(product)
+            details["aoi"] = aoi_details
             return power, details, counter.bytes_read
     finally:
         counter.close()
@@ -237,14 +285,15 @@ def stream_change_pair(
     frequency: str = "frequencyA",
     polarization: str = "HH",
     threshold_db: float = 3.0,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any]:
     if before_product_id == after_product_id:
         raise ValueError("before and after observations must be different")
     before, before_details, before_bytes = _open_dataset_overview(
-        before_granule, frequency, polarization
+        before_granule, frequency, polarization, bbox
     )
     after, after_details, after_bytes = _open_dataset_overview(
-        after_granule, frequency, polarization
+        after_granule, frequency, polarization, bbox
     )
     if before.shape != after.shape:
         raise ValueError(
@@ -309,6 +358,7 @@ def stream_granule(
     frequency: str = "frequencyA",
     polarization: str = "HH",
     threshold_db: float = 3.0,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any]:
     import earthaccess
     import h5py
@@ -333,7 +383,22 @@ def stream_granule(
             if not paths:
                 raise ValueError("no frequencyA HHHH/HVHV GCOV datasets were found")
             dataset_path = paths[0]
-            image, details = _read_overview(product[dataset_path])
+            y_slice, x_slice, aoi_details = _coordinate_window(product, dataset_path, bbox)
+            dataset = product[dataset_path]
+            if y_slice.start is None and y_slice.stop is None and x_slice.start is None and x_slice.stop is None:
+                image, details = _read_overview(dataset)
+            else:
+                subset = np.asarray(dataset[y_slice, x_slice], dtype=np.float32)
+                valid = np.isfinite(subset) & (subset > 0)
+                if not np.any(valid):
+                    raise ValueError("selected AOI contains no positive finite samples")
+                db = np.full(subset.shape, np.nan, dtype=np.float32)
+                db[valid] = 10 * np.log10(subset[valid])
+                low, high = np.nanpercentile(db, [2, 98])
+                image = np.zeros(subset.shape, dtype=np.uint8)
+                image[valid] = np.clip((db[valid] - low) / max(high - low, 1e-6) * 255, 0, 255).astype(np.uint8)
+                details = {"shape": list(dataset.shape), "chunks": list(dataset.chunks) if dataset.chunks else None, "stride": 1, "valid_pixels": int(np.count_nonzero(valid)), "db_percentiles": [float(low), float(high)]}
+            details["aoi"] = aoi_details
             georeferencing = _discover_georeferencing(product)
             product.visititems(visit_coordinates)
             attributes = {
