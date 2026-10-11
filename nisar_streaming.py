@@ -62,8 +62,14 @@ class CountingFile:
     def readable(self) -> bool:
         return True
 
+    def writable(self) -> bool:
+        return False
+
     def seekable(self) -> bool:
         return True
+
+    def write(self, _data: bytes) -> int:
+        raise OSError("remote NISAR stream is read-only")
 
     def close(self) -> None:
         self._file.close()

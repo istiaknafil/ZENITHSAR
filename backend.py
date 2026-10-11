@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ import earthaccess
 
 from nisar_pipeline import DatasetMetadata, inspect_hdf5, discover_gcov
 from nisar_streaming import MAX_GRANULES, stream_change_pair, stream_granule
+
+LOGGER = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent
 DATA_ROOT = (ROOT / "data" / "earthdata").resolve()
@@ -354,6 +357,12 @@ def stream_observations(
             earthaccess.exceptions.ServiceOutage,
         ) as exc:
             raise HTTPException(status_code=422, detail=f"streaming failed for {observation.product_id}: {exc}") from exc
+        except Exception as exc:
+            LOGGER.exception("unexpected streaming failure for %s", observation.product_id)
+            raise HTTPException(
+                status_code=422,
+                detail=f"unexpected streaming failure for {observation.product_id}: {type(exc).__name__}: {exc}",
+            ) from exc
     return {
         "status": "complete",
         "count": len(results),
@@ -416,6 +425,12 @@ def change_observations(
         earthaccess.exceptions.ServiceOutage,
     ) as exc:
         raise HTTPException(status_code=422, detail=f"change processing failed: {exc}") from exc
+    except Exception as exc:
+        LOGGER.exception("unexpected change failure for %s -> %s", before.product_id, after.product_id)
+        raise HTTPException(
+            status_code=422,
+            detail=f"unexpected change failure: {type(exc).__name__}: {exc}",
+        ) from exc
     return {
         "status": "complete",
         "result": result,
