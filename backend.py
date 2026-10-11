@@ -340,7 +340,7 @@ def stream_observations(
                     bbox=bbox,
                 )
             )
-        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
             raise HTTPException(status_code=422, detail=f"streaming failed for {observation.product_id}: {exc}") from exc
     return {
         "status": "complete",
@@ -391,7 +391,7 @@ def change_observations(
             threshold_db=threshold_db,
             bbox=bbox,
         )
-    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
         raise HTTPException(status_code=422, detail=f"change processing failed: {exc}") from exc
     return {
         "status": "complete",

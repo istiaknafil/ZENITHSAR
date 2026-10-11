@@ -68,6 +68,17 @@ class CountingFile:
     def close(self) -> None:
         self._file.close()
 
+    def flush(self) -> None:
+        flush = getattr(self._file, "flush", None)
+        if flush is not None:
+            flush()
+
+    def truncate(self, size: int | None = None) -> int:
+        truncate = getattr(self._file, "truncate", None)
+        if truncate is None:
+            return self.tell()
+        return truncate(size) if size is not None else truncate()
+
     def __enter__(self) -> "CountingFile":
         return self
 
@@ -227,7 +238,6 @@ def _coordinate_window(product: Any, dataset_path: str, bbox: tuple[float, float
         digits = "".join(character for character in epsg_value if character.isdigit())
         epsg_value = digits
     epsg = int(epsg_value)
-    epsg = int(epsg_value)
     transformer = pyproj.Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
     west, south, east, north = bbox
     x0, y0 = transformer.transform(west, south)
@@ -290,7 +300,12 @@ def _open_dataset_overview(
     import h5py
 
     _ensure_earthdata_login(earthaccess)
-    handles = earthaccess.open([granule], show_progress=False)
+    handles = earthaccess.open(
+        [granule],
+        credentials_endpoint="https://nisar.asf.earthdatacloud.nasa.gov/s3credentials",
+        show_progress=False,
+        open_kwargs={"cache_type": "blockcache", "block_size": 16 * 1024 * 1024},
+    )
     if not handles:
         raise RuntimeError("earthaccess.open returned no file handle")
     counter = CountingFile(handles[0])
@@ -423,7 +438,12 @@ def stream_granule(
         return json.loads(metadata_path.read_text(encoding="utf-8")) | {"cached": True}
 
     started = time.perf_counter()
-    handles = earthaccess.open([granule], show_progress=False)
+    handles = earthaccess.open(
+        [granule],
+        credentials_endpoint="https://nisar.asf.earthdatacloud.nasa.gov/s3credentials",
+        show_progress=False,
+        open_kwargs={"cache_type": "blockcache", "block_size": 16 * 1024 * 1024},
+    )
     if not handles:
         raise RuntimeError("earthaccess.open returned no file handle")
     counter = CountingFile(handles[0])

@@ -161,6 +161,22 @@ the requested AOI. The Cookbook checkout under
 `.references/NISAR_Cookbook` is an ignored implementation reference; its
 notebooks are not copied into the production frontend.
 
+The official `ua-asf/nisar-docs` streaming guidance is also kept as an ignored
+reference under `.references/nisar-docs`. The remote file adapter uses the
+documented 16 MB block cache for HTTPS range reads; it never persists the
+remote HDF5 source.
+
+Additional ignored references are available under `.references/`:
+
+- `NISAR_Inundation` supplies documented wetland/open-water and inundated-vegetation
+  classification concepts. The website continues to label its output as
+  candidate change until a location-specific calibration is supplied.
+- `MintPy` is an InSAR time-series toolkit and is not used for GCOV intensity
+  products.
+- `sarpy` targets SICD/SIDD and related SAR formats, not NISAR GCOV HDF5.
+- `sds-ondemand` is an on-demand processing/infrastructure reference rather than
+  a browser-side dependency.
+
 If the product metadata includes a numeric EPSG attribute and matching coordinate
 bounds for both products, the frontend transforms those bounds to Web Mercator
 and adds the derived PNG as a toggleable, opacity-controlled OpenLayers image
