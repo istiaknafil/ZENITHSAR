@@ -4,10 +4,22 @@
   const apiBase = window.EARTH_CHANGE_CONFIG?.apiBase || '';
   let observations = [];
 
-  const baseLayer = new ol.layer.Tile({
+  const osmLayer = new ol.layer.Tile({
     source: new ol.source.OSM({ attributions: '© OpenStreetMap contributors' }),
-    properties: { key: 'basemap', name: 'Basemap', kind: 'basemap' },
+    properties: { key: 'osm-basemap', name: 'OpenStreetMap basemap', kind: 'basemap' },
   });
+  const mapboxToken = window.EARTH_CHANGE_CONFIG?.mapboxToken || '';
+  const mapboxLayer = mapboxToken ? new ol.layer.Tile({
+    source: new ol.source.XYZ({
+      url: `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/512/{z}/{x}/{y}?access_token=${encodeURIComponent(mapboxToken)}`,
+      attributions: '© Mapbox © OpenStreetMap',
+      tileSize: 512,
+      maxZoom: 22,
+    }),
+    visible: false,
+    properties: { key: 'mapbox-basemap', name: 'Mapbox satellite basemap', kind: 'basemap' },
+  }) : null;
+  const baseLayer = osmLayer;
   const studySource = new ol.source.Vector();
   const studyLayer = new ol.layer.Vector({
     source: studySource,
@@ -19,7 +31,7 @@
   });
   const map = new ol.Map({
     target: 'map',
-    layers: [baseLayer, studyLayer],
+    layers: [osmLayer, ...(mapboxLayer ? [mapboxLayer] : []), studyLayer],
     view: new ol.View({ center: ol.proj.fromLonLat([-98, 38]), zoom: 3 }),
     controls: ol.control.defaults.defaults({ attribution: false, zoom: false }),
   });
@@ -30,6 +42,7 @@
 
   const layers = [
     { layer: baseLayer, visible: true },
+    ...(mapboxLayer ? [{ layer: mapboxLayer, visible: false }] : []),
     { layer: studyLayer, visible: true },
   ];
 
@@ -39,7 +52,13 @@
     $('selectedLayerBadge').textContent = layer.get('name') || 'Unnamed';
     const source = layer.getSource?.();
     const metadata = $('metadataList');
-    const sourceDescription = layer.get('kind') === 'demo' ? 'Local demo geometry (not an observation)' : 'OpenStreetMap XYZ tiles';
+    const sourceDescription = layer.get('kind') === 'demo'
+      ? 'Local study geometry'
+      : layer.get('key') === 'mapbox-basemap'
+        ? 'Mapbox satellite tiles via OpenLayers'
+        : layer.get('kind') === 'change'
+          ? 'Derived NISAR candidate-change preview'
+          : 'OpenStreetMap tiles via OpenLayers';
     metadata.innerHTML = `<dt>Source</dt><dd>${sourceDescription}</dd><dt>CRS</dt><dd>${source?.getProjection?.()?.getCode?.() || 'EPSG:3857'}</dd><dt>Dimensions</dt><dd>${source?.getFeatures ? `${source.getFeatures().length} feature(s)` : 'Tile source'}</dd><dt>Pixel spacing</dt><dd>Not available</dd><dt>NoData</dt><dd>Not available</dd>`;
     document.querySelectorAll('.layer-row').forEach((row) => row.classList.toggle('selected', row.dataset.key === layer.get('key')));
   }
@@ -108,6 +127,20 @@
     map.addLayer(imageLayer);
     layers.push({ layer: imageLayer, visible: true });
     renderLayers();
+
+    function setBasemap(useMapbox) {
+      if (!mapboxLayer) {
+        $('mapEngineLabel').textContent = 'OpenLayers · OpenStreetMap (Mapbox token not configured)';
+        status('Mapbox basemap needs a public token in static/config.js');
+        return;
+      }
+      osmLayer.setVisible(!useMapbox);
+      mapboxLayer.setVisible(useMapbox);
+      $('mapEngineLabel').textContent = useMapbox
+        ? 'OpenLayers · Mapbox satellite'
+        : 'OpenLayers · OpenStreetMap';
+      renderLayers();
+    }
     map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 300 });
     return true;
   }
@@ -130,6 +163,11 @@
   $('aboutBtn').addEventListener('click', () => window.alert('EarthChange AI is an early-stage GIS and image-comparison prototype. Live NISAR data require an optional Earthdata-enabled backend.'));
   $('newProjectBtn').addEventListener('click', () => { studySource.clear(); if (localLayer) { map.removeLayer(localLayer); localLayer = null; } renderLayers(); status('New local project'); });
   $('saveProjectBtn').addEventListener('click', () => status('Project saving is local-only scaffolding; no server is configured.'));
+  document.querySelectorAll('[data-study]').forEach((button) => button.addEventListener('click', () => {
+    $('studyAreaInput').value = button.dataset.study;
+    zoomToInput();
+  }));
+  $('basemapBtn').addEventListener('click', () => setBasemap(!mapboxLayer?.getVisible?.()));
   function catalogRequest() {
     const body = { collection: $('collectionSelect').value, count: 20 };
     if ($('startDateInput').value) body.start = `${$('startDateInput').value}T00:00:00Z`;

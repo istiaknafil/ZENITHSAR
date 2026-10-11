@@ -41,17 +41,19 @@
             <button class="sidebar-tab" data-tab="layers">Layers</button>
           </div>
           <section class="sidebar-content tab-panel active" data-panel="catalog">
-            <div class="panel-title"><h2>Global NISAR catalog</h2><button class="icon-button" id="refreshBtn" title="Refresh observation search">↻</button></div>
+            <div class="panel-title"><h2>Explore NISAR change</h2><button class="icon-button" id="refreshBtn" title="Refresh observation search">↻</button></div>
+            <p class="workflow-hint"><strong>1</strong> Choose an area · <strong>2</strong> Search observations · <strong>3</strong> Select two dates · <strong>4</strong> Process candidate change</p>
             <label class="field-label">Study area</label>
-            <div class="inline-field"><input id="studyAreaInput" placeholder="lat, lon, zoom (e.g. 35.68,-78.64,10)" /><button id="zoomStudyBtn" class="small-button">Go</button></div>
+            <div class="inline-field"><input id="studyAreaInput" placeholder="lat, lon, zoom (e.g. 23.81,90.41,8)" /><button id="zoomStudyBtn" class="small-button">Go</button></div>
+            <div class="quick-actions"><button class="small-button" data-study="23.81,90.41,8">Dhaka</button><button class="small-button" data-study="22.36,91.78,9">Chittagong</button><button class="small-button" data-study="25.74,89.28,9">Rangpur</button></div>
             <label class="field-label">Observation collection<select id="collectionSelect"><option value="NISAR_L2_GCOV_PROVISIONAL_V1">GCOV Provisional</option><option value="NISAR_L2_GCOV_BETA_V1">GCOV Beta</option></select></label>
             <div class="form-grid">
               <label class="field-label">Start date<input id="startDateInput" type="date" /></label>
               <label class="field-label">End date<input id="endDateInput" type="date" /></label>
             </div>
-            <label class="field-label">Bounding box <input id="bboxInput" placeholder="west,south,east,north (optional)" /></label>
+            <label class="field-label">Bounding box <input id="bboxInput" placeholder="west,south,east,north (optional)" /><span class="field-help">Draw a rectangle on the map, or leave empty for a broad search.</span></label>
             <button class="primary-button full-width" id="searchCatalogBtn">Search actual catalog</button>
-            <p class="help-text">Searches real NASA/ASF metadata. Results are paginated; products are not downloaded during discovery.</p>
+            <p class="help-text">Searches real NASA/ASF metadata only. Products are not downloaded during discovery.</p>
             <div class="timeline-panel"><div class="section-label">Actual acquisition timeline</div><div id="timelineRange">Not loaded</div><input id="timelineSlider" type="range" min="0" max="100" value="100" disabled /><div id="timelineDate">Choose a catalog date</div></div>
             <div class="catalog-tree">
               <div class="tree-heading">Study areas</div><div class="tree-row muted-row">No saved study areas</div>
@@ -69,18 +71,20 @@
 
         <section class="map-workspace">
           <div id="map" class="map-canvas" aria-label="Interactive map"></div>
-          <div class="map-toolbar">
+          <div class="map-toolbar" aria-label="Map controls">
             <button id="resetViewBtn" title="Reset view">⌂</button>
             <button id="zoomInBtn" title="Zoom in">+</button><button id="zoomOutBtn" title="Zoom out">−</button>
             <button id="drawBoxBtn" title="Draw study-area rectangle">▣</button>
+            <button id="basemapBtn" title="Switch between OpenStreetMap and Mapbox-style basemap">◈</button>
           </div>
-          <div class="map-legend" id="legend"><strong>Legend</strong><span><i class="legend-swatch demo"></i> DEMO DATA: study area</span></div>
+          <div class="map-legend" id="legend"><strong>Legend</strong><span><i class="legend-swatch demo"></i> Study area / candidate output</span><span class="map-engine-label" id="mapEngineLabel">OpenLayers · OpenStreetMap</span></div>
           <div class="map-attribution">© OpenStreetMap contributors · OpenLayers</div>
         </section>
 
         <aside class="sidebar right-sidebar" aria-label="Properties and analysis panel">
           <section class="sidebar-content tab-panel active" data-panel="analysis">
-            <div class="panel-title"><h2>Analysis</h2><span class="badge">Exploratory</span></div>
+            <div class="panel-title"><h2>Process change</h2><span class="badge">Candidate only</span></div>
+            <p class="help-text">Choose two acquisitions from the same collection maturity. The result is radar-backscatter change, not automatic proof of flooding or damage.</p>
             <div class="section-label">Observation pair</div>
             <label class="field-label">Earlier observation<select id="earlierSelect"><option value="">Not selected</option></select></label>
             <label class="field-label">Later observation<select id="laterSelect"><option value="">Not selected</option></select></label>
@@ -90,7 +94,7 @@
               <label class="field-label">Polarization<select id="polarizationSelect"><option>Not selected</option><option>HH</option><option>HV</option><option>VH</option><option>VV</option></select></label>
               <label class="field-label">Threshold (dB)<input id="thresholdInput" type="number" min="0" step="0.1" value="3" /></label>
             </div>
-            <button class="primary-button full-width" id="processBtn">Validate and process pair</button>
+            <button class="primary-button full-width" id="processBtn">Process selected pair</button>
             <div class="notice" id="analysisNotice">No observations selected. Add a prepared GeoTIFF or connect the optional Earthdata service.</div>
             <div class="section-label">Output layers</div>
             <label class="check-row"><input type="checkbox" id="changeLayerToggle" checked disabled /> Potential change mask <span class="muted">unavailable</span></label>

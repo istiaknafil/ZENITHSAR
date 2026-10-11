@@ -95,8 +95,12 @@ hosting and uses client-side image comparison logic only; there is no Python
 backend required on GitHub Pages.
 
 The frontend now includes a desktop-style GIS workspace in
-[static/index.html](./static/index.html). It uses OpenLayers with an attributed
-OpenStreetMap basemap, a layer manager, study-area controls, map navigation,
+[static/index.html](./static/index.html). It uses OpenLayers as the map and
+overlay engine with an attributed OpenStreetMap fallback basemap. A public
+Mapbox access token can be set as `mapboxToken` in
+[static/config.js](./static/config.js) to enable the Mapbox satellite basemap
+toggle; NISAR layers remain OpenLayers image layers.
+The workspace includes a layer manager, study-area controls, map navigation,
 local GeoJSON loading, honest empty states for live NISAR observations, and a
 client-side image comparison drawer. GeoTIFF/HDF5 scientific layers are not
 silently treated as ordinary images: they require georeferenced processing or
