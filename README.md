@@ -148,6 +148,12 @@ confirmed environmental cause. Until real coordinate and projection metadata
 has been validated for the opened product, the result is a preview and is not
 presented as a georeferenced map raster.
 
+If the product metadata includes a numeric EPSG attribute and matching coordinate
+bounds for both products, the frontend transforms those bounds to Web Mercator
+and adds the derived PNG as a toggleable, opacity-controlled OpenLayers image
+layer. Without those validated fields it leaves the preview as a download/view
+link and explains that it is not map-ready.
+
 The GIS catalog supports collection, date-range, and bounding-box filters. The
 archive endpoint exposes bounded pagination and labels responses as `partial`
 when the provider result window is saturated; it never presents a bounded

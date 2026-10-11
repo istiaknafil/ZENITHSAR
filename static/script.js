@@ -62,6 +62,55 @@
     });
     if (selectedLayer) setActiveLayer(selectedLayer);
   }
+
+  function addDerivedChangeLayer(result) {
+    const georeferencing = result.before?.georeferencing;
+    const bounds = georeferencing?.bounds;
+    const projectionAttribute = georeferencing?.projection_attributes || {};
+    const epsgValue = Object.entries(projectionAttribute).find(([key]) => key.toLowerCase().includes('epsg'))?.[1];
+    const epsg = Number(epsgValue);
+    if (!bounds || !Number.isFinite(epsg)) {
+      return false;
+    }
+    const sourceProjection = `EPSG:${epsg}`;
+    let extent;
+    try {
+      extent = ol.proj.transformExtent(
+        [bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax],
+        sourceProjection,
+        'EPSG:3857',
+      );
+    } catch (error) {
+      console.warn('Could not transform derived NISAR extent', error);
+      return false;
+    }
+    const key = `change-${result.before_product_id}-${result.after_product_id}`;
+    const existing = layers.find(({ layer }) => layer.get('key') === key);
+    if (existing) {
+      existing.layer.setVisible(true);
+      setActiveLayer(existing.layer);
+      return true;
+    }
+    const imageLayer = new ol.layer.Image({
+      source: new ol.source.ImageStatic({
+        url: `${apiBase}/${result.preview}`,
+        projection: 'EPSG:3857',
+        imageExtent: extent,
+      }),
+      opacity: 0.8,
+      properties: {
+        key,
+        name: `NISAR candidate change: ${result.before_product_id} → ${result.after_product_id}`,
+        kind: 'change',
+        metadata: result,
+      },
+    });
+    map.addLayer(imageLayer);
+    layers.push({ layer: imageLayer, visible: true });
+    renderLayers();
+    map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 300 });
+    return true;
+  }
   renderLayers();
 
   function activateTab(tab) {
@@ -196,7 +245,8 @@
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
       if (selected.length === 2) {
         const result = payload.result;
-        $('analysisNotice').innerHTML = `Candidate change calculated: ${result.changed_percent.toFixed(2)}% of valid sampled pixels changed at ±${result.threshold_db} dB. <a href="${apiBase}/${result.preview}" target="_blank" rel="noopener">Open derived preview</a><br><small>${result.warning}</small>`;
+        const mapped = addDerivedChangeLayer(result);
+        $('analysisNotice').innerHTML = `Candidate change calculated: ${result.changed_percent.toFixed(2)}% of valid sampled pixels changed at ±${result.threshold_db} dB. <a href="${apiBase}/${result.preview}" target="_blank" rel="noopener">Open derived preview</a>${mapped ? ' · Added to map' : ''}<br><small>${result.warning}</small>`;
         status(`Change calculated · ${result.changed_pixels.toLocaleString()} candidate pixels`);
       } else {
         const bytes = payload.granules.reduce((total, item) => total + (item.bytes_read || 0), 0);
