@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend
+from nisar_streaming import _discover_georeferencing
 
 
 class FakeGranule(dict):
@@ -197,3 +198,21 @@ def test_change_rejects_mixed_maturity(monkeypatch) -> None:
         json=["beta", "provisional"],
     )
     assert response.status_code == 422
+
+
+def test_georeferencing_discovery_reads_coordinate_ranges(tmp_path: Path) -> None:
+    try:
+        import h5py
+    except ImportError as exc:
+        pytest.skip(f"h5py native library unavailable: {exc}")
+    product_path = tmp_path / "coordinates.h5"
+    with h5py.File(product_path, "w") as product:
+        grid = product.create_group("science/LSAR/GCOV/grids/frequencyA")
+        grid.create_dataset("xCoordinates", data=[100.0, 101.0, 102.0])
+        grid.create_dataset("yCoordinates", data=[20.0, 19.0, 18.0])
+        grid.attrs["epsg"] = 32646
+        discovered = _discover_georeferencing(product)
+    assert discovered["coordinates"]["xCoordinates"]["range"] == [100.0, 102.0]
+    assert discovered["coordinates"]["yCoordinates"]["range"] == [20.0, 18.0]
+    assert discovered["bounds"] == {"xmin": 100.0, "ymin": 18.0, "xmax": 102.0, "ymax": 20.0}
+    assert discovered["projection_attributes"]["epsg"] == 32646

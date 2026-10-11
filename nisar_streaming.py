@@ -85,6 +85,57 @@ def _json_value(value: Any) -> Any:
     return value
 
 
+def _scalar_attributes(item: Any) -> dict[str, Any]:
+    return {
+        str(key): _json_value(value)
+        for key, value in getattr(item, "attrs", {}).items()
+        if np.asarray(value).ndim == 0
+    }
+
+
+def _discover_georeferencing(product: Any) -> dict[str, Any]:
+    coordinates: dict[str, Any] = {}
+    projection: dict[str, Any] = {}
+
+    def visit(name: str, item: Any) -> None:
+        lower_name = name.lower()
+        if hasattr(item, "shape") and lower_name.endswith(("xcoordinates", "ycoordinates")):
+            coordinate_name = "xCoordinates" if lower_name.endswith("xcoordinates") else "yCoordinates"
+            shape = list(item.shape)
+            entry: dict[str, Any] = {"path": f"/{name}", "shape": shape}
+            if len(shape) == 1 and shape[0]:
+                first = _json_value(item[0])
+                last = _json_value(item[shape[0] - 1])
+                if isinstance(first, (int, float)) and isinstance(last, (int, float)):
+                    entry["range"] = [first, last]
+            coordinates[coordinate_name] = entry
+        attrs = _scalar_attributes(item)
+        for key, value in attrs.items():
+            normalized = key.lower()
+            if "epsg" in normalized or "projection" in normalized or normalized in {
+                "spatial_ref",
+                "crs",
+                "proj4",
+            }:
+                projection[key] = value
+
+    product.visititems(visit)
+    result: dict[str, Any] = {"coordinates": coordinates}
+    if projection:
+        result["projection_attributes"] = projection
+    if "xCoordinates" in coordinates and "yCoordinates" in coordinates:
+        x_range = coordinates["xCoordinates"].get("range")
+        y_range = coordinates["yCoordinates"].get("range")
+        if x_range and y_range:
+            result["bounds"] = {
+                "xmin": min(x_range),
+                "ymin": min(y_range),
+                "xmax": max(x_range),
+                "ymax": max(y_range),
+            }
+    return result
+
+
 def _candidate_paths(product: Any, frequency: str = "frequencyA", polarization: str = "HH") -> list[str]:
     candidates: list[str] = []
 
@@ -169,6 +220,7 @@ def _open_dataset_overview(
             power, details = _read_power_overview(product[paths[0]])
             details["dataset_paths"] = paths
             details["selected_dataset"] = paths[0]
+            details["georeferencing"] = _discover_georeferencing(product)
             return power, details, counter.bytes_read
     finally:
         counter.close()
@@ -199,6 +251,14 @@ def stream_change_pair(
             "selected products do not have matching sampled grid shapes; "
             "a georeferenced reprojection is required before comparison"
         )
+    before_geo = before_details.get("georeferencing", {})
+    after_geo = after_details.get("georeferencing", {})
+    if before_geo.get("bounds") and after_geo.get("bounds"):
+        if before_geo["bounds"] != after_geo["bounds"]:
+            raise ValueError(
+                "selected products have different coordinate bounds; "
+                "a georeferenced alignment step is required before comparison"
+            )
     valid = np.isfinite(before) & np.isfinite(after) & (before > 0) & (after > 0)
     if not np.any(valid):
         raise ValueError("selected pair contains no overlapping positive-power samples")
@@ -274,14 +334,7 @@ def stream_granule(
                 raise ValueError("no frequencyA HHHH/HVHV GCOV datasets were found")
             dataset_path = paths[0]
             image, details = _read_overview(product[dataset_path])
-            coordinates: dict[str, Any] = {}
-            def visit_coordinates(name: str, item: Any) -> None:
-                for coordinate_name in ("xCoordinates", "yCoordinates"):
-                    if name.endswith(coordinate_name) and hasattr(item, "shape"):
-                        coordinates[coordinate_name] = {
-                            "path": f"/{name}",
-                            "shape": list(item.shape),
-                        }
+            georeferencing = _discover_georeferencing(product)
             product.visititems(visit_coordinates)
             attributes = {
                 key: _json_value(value)
@@ -302,7 +355,8 @@ def stream_granule(
         "polarization": polarization,
         "threshold_db": threshold_db,
         "details": details,
-        "coordinates": coordinates,
+        "coordinates": georeferencing["coordinates"],
+        "georeferencing": georeferencing,
         "attributes": attributes,
         "bytes_read": counter.bytes_read,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
