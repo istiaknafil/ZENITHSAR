@@ -155,7 +155,9 @@ presented as a georeferenced map raster.
 When a bounding box is supplied, the streamer uses the ASF NISAR Cookbook
 coordinate-window pattern: it reads the GCOV grid coordinates and projection,
 transforms the EPSG:4326 AOI to the product CRS, and requests only the
-intersecting HDF5 window. The Cookbook checkout under
+intersecting HDF5 window. AOI windows are block-mean decimated when necessary
+to stay below the one-million-pixel processing cap, and the cache key includes
+the requested AOI. The Cookbook checkout under
 `.references/NISAR_Cookbook` is an ignored implementation reference; its
 notebooks are not copied into the production frontend.
 

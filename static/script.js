@@ -128,23 +128,24 @@
     layers.push({ layer: imageLayer, visible: true });
     renderLayers();
 
-    function setBasemap(useMapbox) {
-      if (!mapboxLayer) {
-        $('mapEngineLabel').textContent = 'OpenLayers · OpenStreetMap (Mapbox token not configured)';
-        status('Mapbox basemap needs a public token in static/config.js');
-        return;
-      }
-      osmLayer.setVisible(!useMapbox);
-      mapboxLayer.setVisible(useMapbox);
-      $('mapEngineLabel').textContent = useMapbox
-        ? 'OpenLayers · Mapbox satellite'
-        : 'OpenLayers · OpenStreetMap';
-      renderLayers();
-    }
     map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 300 });
     return true;
   }
   renderLayers();
+
+  function setBasemap(useMapbox) {
+    if (!mapboxLayer) {
+      $('mapEngineLabel').textContent = 'OpenLayers · OpenStreetMap (Mapbox token not configured)';
+      status('Mapbox basemap needs a public token in static/config.js');
+      return;
+    }
+    osmLayer.setVisible(!useMapbox);
+    mapboxLayer.setVisible(useMapbox);
+    $('mapEngineLabel').textContent = useMapbox
+      ? 'OpenLayers · Mapbox satellite'
+      : 'OpenLayers · OpenStreetMap';
+    renderLayers();
+  }
 
   function activateTab(tab) {
     document.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === tab));
@@ -232,7 +233,8 @@
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
       observations = payload.observations || [];
       renderObservationList();
-      const timelineParams = new URLSearchParams({ collection: $('collectionSelect').value });
+      const body = catalogRequest();
+      const timelineParams = new URLSearchParams({ collection: body.collection });
       if (body.start) timelineParams.set('start', body.start);
       if (body.end) timelineParams.set('end', body.end);
       if (body.bbox) {

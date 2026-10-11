@@ -153,7 +153,11 @@ def _candidate_paths(product: Any, frequency: str = "frequencyA", polarization: 
 
 def _read_overview(dataset: Any) -> tuple[np.ndarray, dict[str, Any]]:
     height, width = dataset.shape[-2], dataset.shape[-1]
-    stride = max(1, math.ceil(math.sqrt((height * width) / MAX_PIXELS)))
+    stride = min(
+        max(1, math.ceil(math.sqrt((height * width) / MAX_PIXELS))),
+        height,
+        width,
+    )
     array = np.asarray(dataset[::stride, ::stride], dtype=np.float32)
     valid = np.isfinite(array) & (array > 0)
     if not np.any(valid):
@@ -204,11 +208,25 @@ def _coordinate_window(product: Any, dataset_path: str, bbox: tuple[float, float
 
     group_path = dataset_path.rsplit("/", 1)[0]
     group = product[group_path]
-    if "xCoordinates" not in group or "yCoordinates" not in group or "projection" not in group:
-        raise ValueError("selected GCOV grid has no xCoordinates, yCoordinates, and projection datasets")
+    if "xCoordinates" not in group or "yCoordinates" not in group:
+        raise ValueError("selected GCOV grid has no xCoordinates and yCoordinates datasets")
     x = np.asarray(group["xCoordinates"][:])
     y = np.asarray(group["yCoordinates"][:])
-    epsg_value = _json_value(group["projection"][()])
+    epsg_value = None
+    if "projection" in group:
+        projection = group["projection"]
+        epsg_value = _json_value(projection[()] if hasattr(projection, "shape") else projection)
+    if epsg_value is None:
+        for key, value in getattr(group, "attrs", {}).items():
+            if "epsg" in str(key).lower():
+                epsg_value = _json_value(value)
+                break
+    if epsg_value is None:
+        raise ValueError("selected GCOV grid has no numeric projection/EPSG metadata")
+    if isinstance(epsg_value, str):
+        digits = "".join(character for character in epsg_value if character.isdigit())
+        epsg_value = digits
+    epsg = int(epsg_value)
     epsg = int(epsg_value)
     transformer = pyproj.Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
     west, south, east, north = bbox
@@ -225,6 +243,40 @@ def _coordinate_window(product: Any, dataset_path: str, bbox: tuple[float, float
         "x_range": [float(x[x_slice][0]), float(x[x_slice][-1])],
         "y_range": [float(y[y_slice][0]), float(y[y_slice][-1])],
         "source_bbox": list(bbox),
+    }
+
+
+def _read_power_window(dataset: Any, y_slice: slice, x_slice: slice) -> tuple[np.ndarray, dict[str, Any]]:
+    height = y_slice.stop - y_slice.start
+    width = x_slice.stop - x_slice.start
+    stride = min(
+        max(1, math.ceil(math.sqrt((height * width) / MAX_PIXELS))),
+        height,
+        width,
+    )
+    sampled_height = max(1, height // stride)
+    sampled_width = max(1, width // stride)
+    window = np.asarray(
+        dataset[
+            y_slice.start : y_slice.start + sampled_height * stride,
+            x_slice.start : x_slice.start + sampled_width * stride,
+        ],
+        dtype=np.float32,
+    )
+    if stride > 1:
+        power = window.reshape(sampled_height, stride, sampled_width, stride).mean(
+            axis=(1, 3), dtype=np.float32
+        )
+    else:
+        power = window
+    valid = np.isfinite(power) & (power > 0)
+    if not np.any(valid):
+        raise ValueError("selected AOI contains no positive finite power samples")
+    return power, {
+        "shape": list(dataset.shape),
+        "chunks": list(dataset.chunks) if dataset.chunks else None,
+        "stride": stride,
+        "valid_pixels": int(np.count_nonzero(valid)),
     }
 
 
@@ -254,21 +306,18 @@ def _open_dataset_overview(
             if y_slice.start is None and y_slice.stop is None and x_slice.start is None and x_slice.stop is None:
                 power, details = _read_power_overview(dataset)
             else:
-                window = np.asarray(dataset[y_slice, x_slice], dtype=np.float32)
-                valid = np.isfinite(window) & (window > 0)
-                if not np.any(valid):
-                    raise ValueError("selected AOI contains no positive finite power samples")
-                power = window
-                details = {
-                    "shape": list(dataset.shape),
-                    "chunks": list(dataset.chunks) if dataset.chunks else None,
-                    "stride": 1,
-                    "valid_pixels": int(np.count_nonzero(valid)),
-                }
+                power, details = _read_power_window(dataset, y_slice, x_slice)
             details["dataset_paths"] = paths
             details["selected_dataset"] = paths[0]
             details["georeferencing"] = _discover_georeferencing(product)
             details["aoi"] = aoi_details
+            if aoi_details:
+                details["georeferencing"]["bounds"] = {
+                    "xmin": min(aoi_details["x_range"]),
+                    "ymin": min(aoi_details["y_range"]),
+                    "xmax": max(aoi_details["x_range"]),
+                    "ymax": max(aoi_details["y_range"]),
+                }
             return power, details, counter.bytes_read
     finally:
         counter.close()
@@ -366,7 +415,8 @@ def stream_granule(
     _ensure_earthdata_login(earthaccess)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     stem = "".join(character if character.isalnum() or character in "._-" else "_" for character in product_id)
-    variant = f"{frequency}_{polarization}"
+    bbox_key = "" if bbox is None else "_" + "_".join(f"{value:.5f}" for value in bbox)
+    variant = f"{frequency}_{polarization}{bbox_key}"
     image_path = OUTPUT_ROOT / f"{stem}_{variant}_preview.png"
     metadata_path = OUTPUT_ROOT / f"{stem}_{variant}_stream.json"
     if image_path.exists() and metadata_path.exists():
@@ -388,7 +438,7 @@ def stream_granule(
             if y_slice.start is None and y_slice.stop is None and x_slice.start is None and x_slice.stop is None:
                 image, details = _read_overview(dataset)
             else:
-                subset = np.asarray(dataset[y_slice, x_slice], dtype=np.float32)
+                subset, details = _read_power_window(dataset, y_slice, x_slice)
                 valid = np.isfinite(subset) & (subset > 0)
                 if not np.any(valid):
                     raise ValueError("selected AOI contains no positive finite samples")
@@ -397,9 +447,16 @@ def stream_granule(
                 low, high = np.nanpercentile(db, [2, 98])
                 image = np.zeros(subset.shape, dtype=np.uint8)
                 image[valid] = np.clip((db[valid] - low) / max(high - low, 1e-6) * 255, 0, 255).astype(np.uint8)
-                details = {"shape": list(dataset.shape), "chunks": list(dataset.chunks) if dataset.chunks else None, "stride": 1, "valid_pixels": int(np.count_nonzero(valid)), "db_percentiles": [float(low), float(high)]}
+                details["db_percentiles"] = [float(low), float(high)]
             details["aoi"] = aoi_details
             georeferencing = _discover_georeferencing(product)
+            if aoi_details:
+                georeferencing["bounds"] = {
+                    "xmin": min(aoi_details["x_range"]),
+                    "ymin": min(aoi_details["y_range"]),
+                    "xmax": max(aoi_details["x_range"]),
+                    "ymax": max(aoi_details["y_range"]),
+                }
             product.visititems(visit_coordinates)
             attributes = {
                 key: _json_value(value)

@@ -1,10 +1,11 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 import backend
-from nisar_streaming import _discover_georeferencing
+from nisar_streaming import _coordinate_window, _discover_georeferencing, _read_power_window
 
 
 class FakeGranule(dict):
@@ -236,3 +237,35 @@ def test_georeferencing_discovery_reads_coordinate_ranges(tmp_path: Path) -> Non
     assert discovered["coordinates"]["yCoordinates"]["range"] == [20.0, 18.0]
     assert discovered["bounds"] == {"xmin": 100.0, "ymin": 18.0, "xmax": 102.0, "ymax": 20.0}
     assert discovered["projection_attributes"]["epsg"] == 32646
+
+
+def test_coordinate_window_handles_descending_y_and_bounds() -> None:
+    pytest.importorskip("pyproj")
+    grid = {
+        "xCoordinates": np.array([88.0, 89.0, 90.0, 91.0]),
+        "yCoordinates": np.array([26.0, 25.0, 24.0, 23.0]),
+        "projection": np.array(4326),
+    }
+    product = {"/science/LSAR/GCOV/grids/frequencyA": grid}
+    y_slice, x_slice, details = _coordinate_window(
+        product,
+        "/science/LSAR/GCOV/grids/frequencyA/HHHH",
+        (88.5, 23.5, 90.5, 25.5),
+    )
+    assert (y_slice.start, y_slice.stop) == (1, 3)
+    assert (x_slice.start, x_slice.stop) == (1, 3)
+    assert details["epsg"] == 4326
+
+
+def test_power_window_decimates_to_pixel_limit() -> None:
+    class Dataset:
+        shape = (2000, 2000)
+        chunks = (100, 100)
+
+        def __getitem__(self, key):
+            rows, columns = key
+            return np.ones((len(range(*rows.indices(self.shape[0]))), len(range(*columns.indices(self.shape[1])))), dtype=np.float32)
+
+    power, details = _read_power_window(Dataset(), slice(0, 2000), slice(0, 2000))
+    assert power.size <= 1_000_000
+    assert details["stride"] == 2
