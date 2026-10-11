@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EarthChange AI | GIS Workspace</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.6.1/ol.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="config.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand"><span class="brand-mark">EC</span><strong>EarthChange AI</strong><span class="muted">GIS Workspace</span></div>
+        <div class="project-actions">
+          <label class="project-select">Project <select id="projectSelect"><option>Untitled study</option></select></label>
+          <button class="tool-button" id="newProjectBtn">New</button>
+          <button class="tool-button" id="saveProjectBtn">Save</button>
+        </div>
+        <nav class="header-nav" aria-label="Workspace menu">
+          <button class="tool-button" data-tab="catalog">Data sources</button>
+          <button class="tool-button" data-tab="analysis">Processing</button>
+          <button class="tool-button" id="aboutBtn">About</button>
+        </nav>
+        <div class="connection-status"><span class="status-dot offline"></span><span id="connectionText">Metadata search not connected</span></div>
+      </header>
+
+      <div class="menu-bar">
+        <button class="menu-item active" data-tab="catalog">Browser</button>
+        <button class="menu-item" data-tab="layers">Layers</button>
+        <button class="menu-item" data-tab="analysis">Analysis</button>
+        <button class="menu-item" data-tab="metadata">Metadata</button>
+        <button class="menu-item" data-tab="comparison">Image comparison</button>
+        <span class="menu-spacer"></span><span class="coord-readout" id="toolbarStatus">Ready</span>
+      </div>
+
+      <main class="workspace">
+        <aside class="sidebar left-sidebar" aria-label="Browser and layers panel">
+          <div class="sidebar-tabs">
+            <button class="sidebar-tab active" data-tab="catalog">Browser</button>
+            <button class="sidebar-tab" data-tab="layers">Layers</button>
+          </div>
+          <section class="sidebar-content tab-panel active" data-panel="catalog">
+            <div class="panel-title"><h2>Global NISAR catalog</h2><button class="icon-button" id="refreshBtn" title="Refresh observation search">↻</button></div>
+            <label class="field-label">Study area</label>
+            <div class="inline-field"><input id="studyAreaInput" placeholder="lat, lon, zoom (e.g. 35.68,-78.64,10)" /><button id="zoomStudyBtn" class="small-button">Go</button></div>
+            <label class="field-label">Observation collection<select id="collectionSelect"><option value="NISAR_L2_GCOV_PROVISIONAL_V1">GCOV Provisional</option><option value="NISAR_L2_GCOV_BETA_V1">GCOV Beta</option></select></label>
+            <div class="form-grid">
+              <label class="field-label">Start date<input id="startDateInput" type="date" /></label>
+              <label class="field-label">End date<input id="endDateInput" type="date" /></label>
+            </div>
+            <label class="field-label">Bounding box <input id="bboxInput" placeholder="west,south,east,north (optional)" /></label>
+            <button class="primary-button full-width" id="searchCatalogBtn">Search actual catalog</button>
+            <p class="help-text">Searches real NASA/ASF metadata. Results are paginated; products are not downloaded during discovery.</p>
+            <div class="timeline-panel"><div class="section-label">Actual acquisition timeline</div><div id="timelineRange">Not loaded</div><input id="timelineSlider" type="range" min="0" max="100" value="100" disabled /><div id="timelineDate">Choose a catalog date</div></div>
+            <div class="catalog-tree">
+              <div class="tree-heading">Study areas</div><div class="tree-row muted-row">No saved study areas</div>
+              <div class="tree-heading">NISAR observations</div><div id="observationList" class="empty-state">No catalog search run.<br /><span>Search the actual NASA/ASF catalog to load observations.</span></div>
+              <div class="tree-heading">Local raster files</div><label class="file-drop"><input id="rasterInput" type="file" accept=".tif,.tiff,.geojson,application/geo+json" />Add GeoTIFF or GeoJSON</label>
+              <div class="tree-heading">Processed outputs</div><div class="tree-row muted-row">No processed outputs in this session</div>
+            </div>
+          </section>
+          <section class="sidebar-content tab-panel" data-panel="layers">
+            <div class="panel-title"><h2>Layers</h2><button class="icon-button" id="layerInfoBtn">ⓘ</button></div>
+            <div id="layerList" class="layer-list"></div>
+            <p class="help-text">Demo layers are clearly marked. Real raster layers appear after a compatible GeoTIFF or backend output is loaded.</p>
+          </section>
+        </aside>
+
+        <section class="map-workspace">
+          <div id="map" class="map-canvas" aria-label="Interactive map"></div>
+          <div class="map-toolbar">
+            <button id="resetViewBtn" title="Reset view">⌂</button>
+            <button id="zoomInBtn" title="Zoom in">+</button><button id="zoomOutBtn" title="Zoom out">−</button>
+            <button id="drawBoxBtn" title="Draw study-area rectangle">▣</button>
+          </div>
+          <div class="map-legend" id="legend"><strong>Legend</strong><span><i class="legend-swatch demo"></i> DEMO DATA: study area</span></div>
+          <div class="map-attribution">© OpenStreetMap contributors · OpenLayers</div>
+        </section>
+
+        <aside class="sidebar right-sidebar" aria-label="Properties and analysis panel">
+          <section class="sidebar-content tab-panel active" data-panel="analysis">
+            <div class="panel-title"><h2>Analysis</h2><span class="badge">Exploratory</span></div>
+            <div class="section-label">Observation pair</div>
+            <label class="field-label">Earlier observation<select id="earlierSelect"><option value="">Not selected</option></select></label>
+            <label class="field-label">Later observation<select id="laterSelect"><option value="">Not selected</option></select></label>
+            <div class="form-grid">
+              <label class="field-label">Product<select id="productSelect"><option>GCOV (not connected)</option></select></label>
+              <label class="field-label">Frequency<select id="frequencySelect"><option>Not selected</option><option>frequencyA</option><option>frequencyB</option></select></label>
+              <label class="field-label">Polarization<select id="polarizationSelect"><option>Not selected</option><option>HH</option><option>HV</option><option>VH</option><option>VV</option></select></label>
+              <label class="field-label">Threshold (dB)<input id="thresholdInput" type="number" min="0" step="0.1" value="3" /></label>
+            </div>
+            <button class="primary-button full-width" id="processBtn">Validate and process pair</button>
+            <div class="notice" id="analysisNotice">No observations selected. Add a prepared GeoTIFF or connect the optional Earthdata service.</div>
+            <div class="section-label">Output layers</div>
+            <label class="check-row"><input type="checkbox" id="changeLayerToggle" checked disabled /> Potential change mask <span class="muted">unavailable</span></label>
+            <label class="check-row"><input type="checkbox" id="differenceLayerToggle" disabled /> Difference raster <span class="muted">unavailable</span></label>
+          </section>
+          <section class="sidebar-content tab-panel" data-panel="metadata">
+            <div class="panel-title"><h2>Layer properties</h2><span class="badge" id="selectedLayerBadge">None</span></div>
+            <dl class="metadata-list" id="metadataList"><dt>Source</dt><dd>Nothing selected</dd><dt>CRS</dt><dd>Not available</dd><dt>Dimensions</dt><dd>Not available</dd><dt>Pixel spacing</dt><dd>Not available</dd><dt>NoData</dt><dd>Not available</dd></dl>
+            <div class="section-label">Display</div>
+            <label class="field-label">Opacity<input id="layerOpacity" type="range" min="0" max="100" value="80" /></label>
+            <p class="help-text">Metadata values are populated only from actual loaded layer sources.</p>
+          </section>
+          <section class="sidebar-content tab-panel" data-panel="catalog"></section>
+          <section class="sidebar-content tab-panel" data-panel="layers"></section>
+          <section class="sidebar-content tab-panel" data-panel="comparison"></section>
+        </aside>
+      </main>
+
+      <section class="comparison-drawer" id="comparisonDrawer" hidden>
+        <div class="drawer-header"><h2>Client-side image comparison</h2><button id="closeComparisonBtn" class="icon-button">×</button></div>
+        <div class="comparison-controls">
+          <label class="file-drop compact"><input id="beforeInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" />Earlier image</label>
+          <label class="file-drop compact"><input id="afterInput" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" />Later image</label>
+          <button id="compareBtn" class="primary-button" disabled>Compare</button><button id="resetBtn" class="tool-button">Reset</button>
+        </div>
+        <div class="comparison-results"><canvas id="beforeCanvas" width="320" height="190"></canvas><canvas id="afterCanvas" width="320" height="190"></canvas><canvas id="diffCanvas" width="640" height="240"></canvas></div>
+        <div class="comparison-metrics"><span id="comparisonStatus">Upload two PNG/JPG images. This is not geospatial validation.</span><span>Threshold <input id="imageThreshold" type="range" min="5" max="200" value="35" /></span><strong id="pixelMetric">0.00% flagged</strong><button id="downloadBtn" class="tool-button" disabled>Download PNG</button></div>
+      </section>
+
+      <footer class="status-bar"><span id="cursorPosition">Cursor: —</span><span id="mapScale">Scale: —</span><span>Projection: EPSG:3857</span><span id="activeLayerStatus">Active layer: none</span><span id="studyAreaStatus">Study area: not set</span><span class="status-spacer"></span><span id="processingStatus">Ready</span></footer>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/ol@10.6.1/dist/ol.js"></script>
+    <script src="script.js?v=gis1"></script>
+  </body>
+</html>

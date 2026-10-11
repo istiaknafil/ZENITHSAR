@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*/__pycache__/
+.pytest_cache/
+outputs/*
+!outputs/.gitkeep
+data/input/*
+!data/input/.gitkeep
+.env
+.env.*
+!.env.example
+data/earthdata/
+data/downloads/
+.references/
+*.h5
+*.hdf5
