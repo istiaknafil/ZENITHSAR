@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
+import earthaccess
 
 from nisar_pipeline import DatasetMetadata, inspect_hdf5, discover_gcov
 from nisar_streaming import MAX_GRANULES, stream_change_pair, stream_granule
@@ -340,7 +341,18 @@ def stream_observations(
                     bbox=bbox,
                 )
             )
-        except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        except (
+            ImportError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            earthaccess.exceptions.DownloadFailure,
+            earthaccess.exceptions.LoginAttemptFailure,
+            earthaccess.exceptions.ServiceOutage,
+        ) as exc:
             raise HTTPException(status_code=422, detail=f"streaming failed for {observation.product_id}: {exc}") from exc
     return {
         "status": "complete",
@@ -391,7 +403,18 @@ def change_observations(
             threshold_db=threshold_db,
             bbox=bbox,
         )
-    except (ImportError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+    except (
+        ImportError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        earthaccess.exceptions.DownloadFailure,
+        earthaccess.exceptions.LoginAttemptFailure,
+        earthaccess.exceptions.ServiceOutage,
+    ) as exc:
         raise HTTPException(status_code=422, detail=f"change processing failed: {exc}") from exc
     return {
         "status": "complete",
