@@ -107,7 +107,11 @@
       row.textContent = `${observation.acquisition_start || 'Unknown date'} · ${observation.product_id}`;
       row.title = `${observation.collection} · ${observation.size_mb?.toFixed?.(1) || 'unknown'} MB`;
       row.addEventListener('click', () => {
-        $('earlierSelect').value = observation.id;
+        const earlier = $('earlierSelect');
+        const later = $('laterSelect');
+        if (!earlier.value) earlier.value = observation.id;
+        else if (!later.value && earlier.value !== observation.id) later.value = observation.id;
+        else earlier.value = observation.id;
         $('metadataList').innerHTML = `<dt>Product</dt><dd>${observation.product_id}</dd><dt>Acquisition</dt><dd>${observation.acquisition_start || 'Unknown'}</dd><dt>Collection</dt><dd>${observation.collection}</dd><dt>Maturity</dt><dd>${observation.collection.includes('BETA') ? 'BETA' : 'PROVISIONAL'}</dd><dt>Estimated size</dt><dd>${observation.size_mb?.toFixed?.(1) || 'Unknown'} MB</dd><dt>Source</dt><dd>${observation.source}</dd>`;
         activateTab('metadata');
       });
@@ -177,7 +181,12 @@
     }
     status('Streaming selected GCOV preview…');
     try {
-      const response = await fetch(`${apiBase}/api/earthdata/stream`, {
+      const params = new URLSearchParams({
+        frequency: $('frequencySelect').value || 'frequencyA',
+        polarization: $('polarizationSelect').value || 'HH',
+        threshold_db: $('thresholdInput').value || '3',
+      });
+      const response = await fetch(`${apiBase}/api/earthdata/stream?${params}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(selected),
@@ -222,9 +231,15 @@
       geometryFunction: ol.interaction.Draw.createBox(),
     });
     map.addInteraction(drawInteraction);
-    drawInteraction.once('drawend', () => {
+    drawInteraction.once('drawend', (event) => {
       map.removeInteraction(drawInteraction);
-      $('studyAreaStatus').textContent = 'Study area: rectangle drawn (local demo geometry)';
+      const extent = event.feature.getGeometry().getExtent();
+      if (extent) {
+        const [west, south] = ol.proj.toLonLat([extent[0], extent[1]]);
+        const [east, north] = ol.proj.toLonLat([extent[2], extent[3]]);
+        $('bboxInput').value = [west, south, east, north].map((value) => value.toFixed(6)).join(',');
+        $('studyAreaStatus').textContent = 'Study area: rectangle ready for catalog search';
+      }
       status('Study area drawn');
     });
   };
@@ -284,6 +299,7 @@
     context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
   }
   function compareImages() {
+    if (!compareState.before || !compareState.after) return;
     const width = Math.max(compareState.before.width, compareState.after.width);
     const height = Math.max(compareState.before.height, compareState.after.height);
     const before = document.createElement('canvas'); before.width = width; before.height = height;

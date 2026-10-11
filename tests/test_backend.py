@@ -141,7 +141,7 @@ def test_stream_writes_only_derived_outputs(monkeypatch) -> None:
     monkeypatch.setattr(
         backend,
         "stream_granule",
-        lambda _granule, product_id: {
+        lambda _granule, product_id, **_: {
             "product_id": product_id,
             "preview": "data/streamed/fixture.png",
         },

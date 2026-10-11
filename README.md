@@ -95,7 +95,7 @@ hosting and uses client-side image comparison logic only; there is no Python
 backend required on GitHub Pages.
 
 The frontend now includes a desktop-style GIS workspace in
-[index.html](./index.html). It uses OpenLayers with an attributed
+[static/index.html](./static/index.html). It uses OpenLayers with an attributed
 OpenStreetMap basemap, a layer manager, study-area controls, map navigation,
 local GeoJSON loading, honest empty states for live NISAR observations, and a
 client-side image comparison drawer. GeoTIFF/HDF5 scientific layers are not
@@ -105,7 +105,9 @@ an API/backend.
 The [backend.py](./backend.py) service now provides real Earthdata metadata
 search endpoints and a bounded streaming-preprocessing boundary. Complete
 granule downloads are disabled.
-When the backend is running, the same service also serves the static frontend.
+When the backend is running, it serves only the files in `static/` as the
+frontend. Project source files, `.env`, `.git`, and local data are not exposed
+as web assets. Derived previews are served separately from `data/streamed/`.
 The frontend refresh action calls the search endpoint and populates the actual
 returned acquisition dates and product identifiers. A static-only server still
 shows the honest disconnected state.
@@ -128,7 +130,9 @@ The current service endpoints are:
 - `POST /api/products/{product_id}/inspect`
 
 Search performs metadata discovery only; it does not download multi-gigabyte
-products. Streaming uses `earthaccess.open()` and h5py file-like access to read
+products. Streaming authenticates with `earthaccess.login(strategy="environment")` on
+the first real streaming request, then uses `earthaccess.open()` and h5py
+file-like access to read
 only bounded `frequencyA` GCOV previews. It writes small PNG/JSON artifacts
 under `data/streamed/`; no `.h5` file is saved. A run is limited to five
 granules and reports catalog sizes before opening them. Credentials remain
@@ -158,10 +162,10 @@ cd C:\Users\user\Downloads\change
 ```
 
 Open `http://127.0.0.1:8010`. Use the refresh button in the Browser panel to
-perform a real unauthenticated metadata search. Searching succeeded in the
-Windows development environment during validation and returned a genuine
-GCOV granule. Product download was not run because the returned test granule
-was several gigabytes and Earthdata authentication was not configured.
+perform a real unauthenticated metadata search. Searching succeeded in the Windows development environment during validation
+and returned a genuine GCOV granule. A live remote HDF5 stream still requires
+Earthdata credentials and ASF access approval; no credentials are stored in
+the repository.
 
 For static-only hosting:
 

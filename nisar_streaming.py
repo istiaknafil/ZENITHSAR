@@ -17,6 +17,23 @@ from PIL import Image
 OUTPUT_ROOT = Path(__file__).resolve().parent / "data" / "streamed"
 MAX_GRANULES = 5
 MAX_PIXELS = 1_000_000
+_AUTHENTICATED = False
+
+
+def _ensure_earthdata_login(earthaccess: Any) -> None:
+    global _AUTHENTICATED
+    if _AUTHENTICATED:
+        return
+    try:
+        earthaccess.login(strategy="environment")
+    except (
+        earthaccess.exceptions.LoginStrategyUnavailable,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError(f"Earthdata authentication failed: {exc}") from exc
+    _AUTHENTICATED = True
 
 
 class CountingFile:
@@ -28,6 +45,13 @@ class CountingFile:
         data = self._file.read(size)
         self.bytes_read += len(data)
         return data
+
+    def readinto(self, buffer: Any) -> int:
+        data = self._file.read(len(buffer))
+        count = len(data)
+        buffer[:count] = data
+        self.bytes_read += count
+        return count
 
     def seek(self, *args: Any) -> int:
         return self._file.seek(*args)
@@ -61,14 +85,15 @@ def _json_value(value: Any) -> Any:
     return value
 
 
-def _candidate_paths(product: Any) -> list[str]:
+def _candidate_paths(product: Any, frequency: str = "frequencyA", polarization: str = "HH") -> list[str]:
     candidates: list[str] = []
 
     def visit(name: str, item: Any) -> None:
         if not hasattr(item, "shape") or len(getattr(item, "shape", ())) < 2:
             return
         normalized = f"/{name}".lower()
-        if "/gcov/grids/frequencya/" in normalized and normalized.endswith(("/hhhh", "/hvhv")):
+        polarization_paths = (f"/{polarization.lower()}{polarization.lower()}", f"/{polarization.lower()}") 
+        if f"/gcov/grids/{frequency.lower()}/" in normalized and normalized.endswith(polarization_paths):
             candidates.append(f"/{name}")
 
     product.visititems(visit)
@@ -97,14 +122,23 @@ def _read_overview(dataset: Any) -> tuple[np.ndarray, dict[str, Any]]:
     }
 
 
-def stream_granule(granule: Any, product_id: str) -> dict[str, Any]:
+def stream_granule(
+    granule: Any,
+    product_id: str,
+    *,
+    frequency: str = "frequencyA",
+    polarization: str = "HH",
+    threshold_db: float = 3.0,
+) -> dict[str, Any]:
     import earthaccess
     import h5py
 
+    _ensure_earthdata_login(earthaccess)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     stem = "".join(character if character.isalnum() or character in "._-" else "_" for character in product_id)
-    image_path = OUTPUT_ROOT / f"{stem}_frequencyA_preview.png"
-    metadata_path = OUTPUT_ROOT / f"{stem}_stream.json"
+    variant = f"{frequency}_{polarization}"
+    image_path = OUTPUT_ROOT / f"{stem}_{variant}_preview.png"
+    metadata_path = OUTPUT_ROOT / f"{stem}_{variant}_stream.json"
     if image_path.exists() and metadata_path.exists():
         return json.loads(metadata_path.read_text(encoding="utf-8")) | {"cached": True}
 
@@ -115,7 +149,7 @@ def stream_granule(granule: Any, product_id: str) -> dict[str, Any]:
     counter = CountingFile(handles[0])
     try:
         with h5py.File(counter, "r") as product:
-            paths = _candidate_paths(product)
+            paths = _candidate_paths(product, frequency=frequency, polarization=polarization)
             if not paths:
                 raise ValueError("no frequencyA HHHH/HVHV GCOV datasets were found")
             dataset_path = paths[0]
@@ -140,6 +174,9 @@ def stream_granule(granule: Any, product_id: str) -> dict[str, Any]:
         "product_id": product_id,
         "dataset_paths": paths,
         "selected_dataset": dataset_path,
+        "frequency": frequency,
+        "polarization": polarization,
+        "threshold_db": threshold_db,
         "details": details,
         "coordinates": coordinates,
         "attributes": attributes,

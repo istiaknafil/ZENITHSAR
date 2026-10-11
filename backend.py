@@ -23,6 +23,7 @@ COLLECTIONS = (
     "NISAR_L2_GCOV_PROVISIONAL_V1",
     "NISAR_L2_GCOV_BETA_V1",
 )
+CATALOG_RESULT_CAP = 1000
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._-]{1,220}$")
 
 
@@ -91,7 +92,7 @@ class Observation(BaseModel):
 
 def _search_payload(request: ObservationSearch, page: int = 1, page_size: int = 20) -> dict[str, Any]:
     """Run a bounded catalog query and expose whether the inventory is partial."""
-    requested = min(page * page_size, 1000)
+    requested = min(page * page_size, CATALOG_RESULT_CAP)
     try:
         results = discover_gcov(
             start=request.start.isoformat() if request.start else None,
@@ -204,10 +205,11 @@ def health() -> dict[str, str]:
 
 @app.get("/api/earthdata/status")
 def earthdata_status() -> dict[str, Any]:
+    authenticated = bool(os.getenv("EARTHDATA_USERNAME") or os.getenv("EARTHDATA_LOGIN"))
     return {
         "search": "available",
         "download": "requires Earthdata Login and ASF access agreement",
-        "authenticated": bool(os.getenv("EARTHDATA_USERNAME") or os.getenv("EARTHDATA_LOGIN")),
+        "authenticated": authenticated,
         "collections": list(COLLECTIONS),
     }
 
@@ -238,22 +240,18 @@ def earthdata_timeline(
     collection: str = Query(default="NISAR_L2_GCOV_PROVISIONAL_V1"),
 ) -> dict[str, Any]:
     request = ObservationSearch(collection=collection, count=100)
-    all_observations: list[Observation] = []
-    for page in range(1, 51):
-        payload = _search_payload(request, page=page, page_size=100)
-        all_observations.extend(
-            Observation.model_validate(item) for item in payload["observations"]
-        )
-        if not payload["has_more"]:
-            break
+    payload = _search_payload(request, page=1, page_size=CATALOG_RESULT_CAP)
+    all_observations = [
+        Observation.model_validate(item) for item in payload["observations"]
+    ]
     dates = sorted(
         observation.acquisition_start
         for observation in all_observations
         if observation.acquisition_start
     )
     return {
-        "status": "complete" if len(all_observations) < 5000 else "partial",
-        "inventory_complete": len(all_observations) < 5000,
+        "status": "complete" if len(all_observations) < CATALOG_RESULT_CAP else "partial",
+        "inventory_complete": len(all_observations) < CATALOG_RESULT_CAP,
         "collection": collection,
         "earliest_acquisition": dates[0] if dates else None,
         "latest_acquisition": dates[-1] if dates else None,
@@ -273,7 +271,12 @@ def download_observation(observation_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/earthdata/stream")
-def stream_observations(observation_ids: list[str]) -> dict[str, Any]:
+def stream_observations(
+    observation_ids: list[str],
+    frequency: str = Query(default="frequencyA", pattern=r"^frequency[A-Z]$"),
+    polarization: str = Query(default="HH", pattern=r"^(HH|HV|VH|VV)$"),
+    threshold_db: float = Query(default=3.0, ge=0),
+) -> dict[str, Any]:
     if not 1 <= len(observation_ids) <= MAX_GRANULES:
         raise HTTPException(status_code=422, detail=f"select between 1 and {MAX_GRANULES} granules")
     missing = [item for item in observation_ids if item not in app.state.observations]
@@ -289,12 +292,25 @@ def stream_observations(observation_ids: list[str]) -> dict[str, Any]:
             flush=True,
         )
         try:
-            results.append(stream_granule(granule, observation.product_id))
+            results.append(
+                stream_granule(
+                    granule,
+                    observation.product_id,
+                    frequency=frequency,
+                    polarization=polarization,
+                    threshold_db=threshold_db,
+                )
+            )
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=f"streaming failed for {observation.product_id}: {exc}") from exc
     return {
         "status": "complete",
         "count": len(results),
+        "parameters": {
+            "frequency": frequency,
+            "polarization": polarization,
+            "threshold_db": threshold_db,
+        },
         "granules": results,
         "storage": "Only derived previews and JSON metadata were written; no .h5 file was saved.",
     }
@@ -322,4 +338,9 @@ def inspect_product(product_id: str) -> ProductInspection:
     return ProductInspection(product_id=product_id, path=path.name, datasets=datasets, candidate_count=len(candidates))
 
 
-app.mount("/", StaticFiles(directory=ROOT, html=True), name="frontend")
+STATIC_ROOT = ROOT / "static"
+STREAMED_ROOT = ROOT / "data" / "streamed"
+STATIC_ROOT.mkdir(parents=True, exist_ok=True)
+STREAMED_ROOT.mkdir(parents=True, exist_ok=True)
+app.mount("/data/streamed", StaticFiles(directory=STREAMED_ROOT), name="streamed")
+app.mount("/", StaticFiles(directory=STATIC_ROOT, html=True), name="frontend")
