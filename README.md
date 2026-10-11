@@ -127,6 +127,7 @@ The current service endpoints are:
 - `POST /api/earthdata/archive/search?page=1&page_size=20`
 - `GET /api/earthdata/timeline?collection=NISAR_L2_GCOV_PROVISIONAL_V1`
 - `POST /api/earthdata/stream`
+- `POST /api/earthdata/change`
 - `POST /api/products/{product_id}/inspect`
 
 Search performs metadata discovery only; it does not download multi-gigabyte
@@ -137,6 +138,15 @@ only bounded `frequencyA` GCOV previews. It writes small PNG/JSON artifacts
 under `data/streamed/`; no `.h5` file is saved. A run is limited to five
 granules and reports catalog sizes before opening them. Credentials remain
 server-side.
+
+When exactly two observations from the same collection maturity are selected,
+`/api/earthdata/change` reads bounded sampled power arrays from both remote
+products, checks their sampled shapes, calculates a dB difference, applies the
+configured candidate threshold, and writes a small derived PNG/JSON result.
+The result deliberately reports candidate backscatter change rather than a
+confirmed environmental cause. Until real coordinate and projection metadata
+has been validated for the opened product, the result is a preview and is not
+presented as a georeferenced map raster.
 
 The GIS catalog supports collection, date-range, and bounding-box filters. The
 archive endpoint exposes bounded pagination and labels responses as `partial`

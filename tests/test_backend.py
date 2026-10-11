@@ -152,3 +152,48 @@ def test_stream_writes_only_derived_outputs(monkeypatch) -> None:
     )
     assert response.status_code == 200
     assert response.json()["storage"].startswith("Only derived previews")
+
+
+def test_change_requires_two_matching_observations(monkeypatch) -> None:
+    for observation_id, product_id in (("before", "before-product"), ("after", "after-product")):
+        backend.app.state.observations[observation_id] = backend.Observation(
+            id=observation_id,
+            product_id=product_id,
+            collection="NISAR_L2_GCOV_BETA_V1",
+            data_urls=[],
+        )
+        backend.app.state.granules[observation_id] = object()
+    monkeypatch.setattr(
+        backend,
+        "stream_change_pair",
+        lambda *_args, **_kwargs: {
+            "changed_percent": 12.5,
+            "changed_pixels": 10,
+            "threshold_db": 3,
+            "preview": "data/streamed/change.png",
+            "warning": "candidate only",
+        },
+    )
+    response = TestClient(backend.app).post(
+        "/api/earthdata/change?frequency=frequencyA&polarization=HH&threshold_db=3",
+        json=["before", "after"],
+    )
+    assert response.status_code == 200
+    assert response.json()["result"]["changed_percent"] == 12.5
+
+
+def test_change_rejects_mixed_maturity(monkeypatch) -> None:
+    backend.app.state.observations["beta"] = backend.Observation(
+        id="beta", product_id="beta", collection="NISAR_L2_GCOV_BETA_V1", data_urls=[]
+    )
+    backend.app.state.observations["provisional"] = backend.Observation(
+        id="provisional",
+        product_id="provisional",
+        collection="NISAR_L2_GCOV_PROVISIONAL_V1",
+        data_urls=[],
+    )
+    response = TestClient(backend.app).post(
+        "/api/earthdata/change",
+        json=["beta", "provisional"],
+    )
+    assert response.status_code == 422

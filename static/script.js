@@ -186,16 +186,23 @@
         polarization: $('polarizationSelect').value || 'HH',
         threshold_db: $('thresholdInput').value || '3',
       });
-      const response = await fetch(`${apiBase}/api/earthdata/stream?${params}`, {
+      const endpoint = selected.length === 2 ? '/api/earthdata/change' : '/api/earthdata/stream';
+      const response = await fetch(`${apiBase}${endpoint}?${params}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(selected),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      const bytes = payload.granules.reduce((total, item) => total + (item.bytes_read || 0), 0);
-      $('analysisNotice').textContent = `Streaming complete. Read approximately ${(bytes / 1_000_000).toFixed(2)} MB and wrote derived previews only.`;
-      status(`Streaming complete · ${payload.count} preview(s)`);
+      if (selected.length === 2) {
+        const result = payload.result;
+        $('analysisNotice').innerHTML = `Candidate change calculated: ${result.changed_percent.toFixed(2)}% of valid sampled pixels changed at ±${result.threshold_db} dB. <a href="${apiBase}/${result.preview}" target="_blank" rel="noopener">Open derived preview</a><br><small>${result.warning}</small>`;
+        status(`Change calculated · ${result.changed_pixels.toLocaleString()} candidate pixels`);
+      } else {
+        const bytes = payload.granules.reduce((total, item) => total + (item.bytes_read || 0), 0);
+        $('analysisNotice').textContent = `Streaming complete. Read approximately ${(bytes / 1_000_000).toFixed(2)} MB and wrote derived previews only.`;
+        status(`Streaming complete · ${payload.count} preview(s)`);
+      }
     } catch (error) {
       $('analysisNotice').textContent = `Streaming unavailable: ${error.message}`;
       status('Streaming failed');

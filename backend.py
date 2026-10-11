@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from nisar_pipeline import DatasetMetadata, inspect_hdf5, discover_gcov
-from nisar_streaming import MAX_GRANULES, stream_granule
+from nisar_streaming import MAX_GRANULES, stream_change_pair, stream_granule
 
 ROOT = Path(__file__).resolve().parent
 DATA_ROOT = (ROOT / "data" / "earthdata").resolve()
@@ -313,6 +313,45 @@ def stream_observations(
         },
         "granules": results,
         "storage": "Only derived previews and JSON metadata were written; no .h5 file was saved.",
+    }
+
+
+@app.post("/api/earthdata/change")
+def change_observations(
+    observation_ids: list[str],
+    frequency: str = Query(default="frequencyA", pattern=r"^frequency[A-Z]$"),
+    polarization: str = Query(default="HH", pattern=r"^(HH|HV|VH|VV)$"),
+    threshold_db: float = Query(default=3.0, ge=0),
+) -> dict[str, Any]:
+    if len(observation_ids) != 2 or observation_ids[0] == observation_ids[1]:
+        raise HTTPException(status_code=422, detail="select exactly two different observations")
+    missing = [item for item in observation_ids if item not in app.state.observations]
+    if missing:
+        raise HTTPException(status_code=404, detail="both observations must come from a prior catalog search")
+    before_id, after_id = observation_ids
+    before = app.state.observations[before_id]
+    after = app.state.observations[after_id]
+    if before.collection != after.collection:
+        raise HTTPException(
+            status_code=422,
+            detail="observations have different processing maturity/collections; select matching products",
+        )
+    try:
+        result = stream_change_pair(
+            app.state.granules[before_id],
+            app.state.granules[after_id],
+            before.product_id,
+            after.product_id,
+            frequency=frequency,
+            polarization=polarization,
+            threshold_db=threshold_db,
+        )
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"change processing failed: {exc}") from exc
+    return {
+        "status": "complete",
+        "result": result,
+        "storage": "Only a derived preview and JSON metadata were written; no .h5 file was saved.",
     }
 
 

@@ -122,6 +122,126 @@ def _read_overview(dataset: Any) -> tuple[np.ndarray, dict[str, Any]]:
     }
 
 
+def _read_power_overview(dataset: Any) -> tuple[np.ndarray, dict[str, Any]]:
+    height, width = dataset.shape[-2], dataset.shape[-1]
+    stride = max(1, math.ceil(math.sqrt((height * width) / MAX_PIXELS)))
+    sampled_height = height // stride
+    sampled_width = width // stride
+    if stride == 1:
+        power = np.asarray(dataset[:sampled_height, :sampled_width], dtype=np.float32)
+    else:
+        window = np.asarray(
+            dataset[: sampled_height * stride, : sampled_width * stride],
+            dtype=np.float32,
+        )
+        power = window.reshape(sampled_height, stride, sampled_width, stride).mean(
+            axis=(1, 3), dtype=np.float32
+        )
+    valid = np.isfinite(power) & (power > 0)
+    return power, {
+        "shape": list(dataset.shape),
+        "chunks": list(dataset.chunks) if dataset.chunks else None,
+        "stride": stride,
+        "valid_pixels": int(np.count_nonzero(valid)),
+    }
+
+
+def _open_dataset_overview(
+    granule: Any,
+    frequency: str,
+    polarization: str,
+) -> tuple[np.ndarray, dict[str, Any], int]:
+    import earthaccess
+    import h5py
+
+    _ensure_earthdata_login(earthaccess)
+    handles = earthaccess.open([granule], show_progress=False)
+    if not handles:
+        raise RuntimeError("earthaccess.open returned no file handle")
+    counter = CountingFile(handles[0])
+    try:
+        with h5py.File(counter, "r") as product:
+            paths = _candidate_paths(product, frequency=frequency, polarization=polarization)
+            if not paths:
+                raise ValueError(
+                    f"no {frequency} {polarization} GCOV dataset was found"
+                )
+            power, details = _read_power_overview(product[paths[0]])
+            details["dataset_paths"] = paths
+            details["selected_dataset"] = paths[0]
+            return power, details, counter.bytes_read
+    finally:
+        counter.close()
+        for handle in handles[1:]:
+            handle.close()
+
+
+def stream_change_pair(
+    before_granule: Any,
+    after_granule: Any,
+    before_product_id: str,
+    after_product_id: str,
+    *,
+    frequency: str = "frequencyA",
+    polarization: str = "HH",
+    threshold_db: float = 3.0,
+) -> dict[str, Any]:
+    if before_product_id == after_product_id:
+        raise ValueError("before and after observations must be different")
+    before, before_details, before_bytes = _open_dataset_overview(
+        before_granule, frequency, polarization
+    )
+    after, after_details, after_bytes = _open_dataset_overview(
+        after_granule, frequency, polarization
+    )
+    if before.shape != after.shape:
+        raise ValueError(
+            "selected products do not have matching sampled grid shapes; "
+            "a georeferenced reprojection is required before comparison"
+        )
+    valid = np.isfinite(before) & np.isfinite(after) & (before > 0) & (after > 0)
+    if not np.any(valid):
+        raise ValueError("selected pair contains no overlapping positive-power samples")
+    difference = np.full(before.shape, np.nan, dtype=np.float32)
+    difference[valid] = 10 * np.log10(after[valid]) - 10 * np.log10(before[valid])
+    changed = valid & (np.abs(difference) >= threshold_db)
+    finite = np.abs(difference[valid])
+    limit = max(threshold_db, float(np.percentile(finite, 98)))
+    scaled = np.zeros(difference.shape, dtype=np.uint8)
+    scaled[valid] = np.clip(
+        (difference[valid] + limit) / (2 * limit) * 255, 0, 255
+    ).astype(np.uint8)
+    output_root = OUTPUT_ROOT
+    output_root.mkdir(parents=True, exist_ok=True)
+    stem = "_".join(
+        "".join(c if c.isalnum() or c in "._-" else "_" for c in value)
+        for value in (before_product_id, after_product_id)
+    )
+    image_path = output_root / f"{stem}_{frequency}_{polarization}_change.png"
+    metadata_path = output_root / f"{stem}_{frequency}_{polarization}_change.json"
+    Image.fromarray(scaled, mode="L").save(image_path, optimize=True)
+    result = {
+        "before_product_id": before_product_id,
+        "after_product_id": after_product_id,
+        "frequency": frequency,
+        "polarization": polarization,
+        "threshold_db": threshold_db,
+        "valid_pixels": int(np.count_nonzero(valid)),
+        "changed_pixels": int(np.count_nonzero(changed)),
+        "changed_percent": float(np.count_nonzero(changed) / np.count_nonzero(valid) * 100),
+        "bytes_read": before_bytes + after_bytes,
+        "before": before_details,
+        "after": after_details,
+        "preview": image_path.relative_to(Path(__file__).resolve().parent).as_posix(),
+        "warning": (
+            "Candidate backscatter change only. This overview is not georeferenced "
+            "until product coordinates and projection metadata are validated."
+        ),
+    }
+    metadata_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return result
+
+
 def stream_granule(
     granule: Any,
     product_id: str,
@@ -154,11 +274,15 @@ def stream_granule(
                 raise ValueError("no frequencyA HHHH/HVHV GCOV datasets were found")
             dataset_path = paths[0]
             image, details = _read_overview(product[dataset_path])
-            coordinates = {}
-            for name in ("xCoordinates", "yCoordinates"):
-                matches = [key for key in product.keys() if key.endswith(name)]
-                if matches:
-                    coordinates[name] = {"path": matches[0], "shape": list(product[matches[0]].shape)}
+            coordinates: dict[str, Any] = {}
+            def visit_coordinates(name: str, item: Any) -> None:
+                for coordinate_name in ("xCoordinates", "yCoordinates"):
+                    if name.endswith(coordinate_name) and hasattr(item, "shape"):
+                        coordinates[coordinate_name] = {
+                            "path": f"/{name}",
+                            "shape": list(item.shape),
+                        }
+            product.visititems(visit_coordinates)
             attributes = {
                 key: _json_value(value)
                 for key, value in product[dataset_path].attrs.items()
