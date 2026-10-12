@@ -16,10 +16,23 @@ import earthaccess
 
 from nisar_pipeline import DatasetMetadata, inspect_hdf5, discover_gcov
 from nisar_streaming import MAX_GRANULES, stream_change_pair, stream_granule
+from openeo_adapter import configuration as openeo_configuration
+from openeo_adapter import submit_change_job
 
 LOGGER = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent
+_env_file = ROOT / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            _k = _k.strip()
+            _v = _v.strip().strip("'\"")
+            if _k and not os.getenv(_k):
+                os.environ[_k] = _v
+
 DATA_ROOT = (ROOT / "data" / "earthdata").resolve()
 DOWNLOAD_ROOT = (DATA_ROOT / "downloads").resolve()
 MAX_DOWNLOAD_MB = float(os.getenv("EARTHDATA_MAX_DOWNLOAD_MB", "512"))
@@ -152,6 +165,20 @@ class ProductInspection(BaseModel):
     candidate_count: int
 
 
+class OpenEOChangeRequest(BaseModel):
+    collection_id: str = Field(min_length=1, max_length=200)
+    before: datetime
+    after: datetime
+    bbox: BBox
+    bands: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> "OpenEOChangeRequest":
+        if self.before >= self.after:
+            raise ValueError("before must be earlier than after")
+        return self
+
+
 app = FastAPI(title="EarthChange AI API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -239,6 +266,31 @@ def earthdata_status() -> dict[str, Any]:
 @app.get("/api/earthdata/collections")
 def earthdata_collections() -> dict[str, Any]:
     return {"collections": [{"short_name": name, "provider": "ASF"} for name in COLLECTIONS]}
+
+
+@app.get("/api/openeo/status")
+def openeo_status() -> dict[str, Any]:
+    return openeo_configuration()
+
+
+@app.post("/api/openeo/change")
+def openeo_change(request: OpenEOChangeRequest) -> dict[str, Any]:
+    try:
+        return submit_change_job(
+            collection_id=request.collection_id,
+            before=request.before,
+            after=request.after,
+            bbox=(request.bbox.west, request.bbox.south, request.bbox.east, request.bbox.north),
+            bands=request.bands,
+        )
+    except (RuntimeError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"openEO job submission failed: {exc}") from exc
+    except Exception as exc:
+        LOGGER.exception("unexpected openEO job submission failure")
+        raise HTTPException(
+            status_code=502,
+            detail=f"unexpected openEO job submission failure: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 @app.post("/api/earthdata/observations/search")

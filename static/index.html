@@ -96,6 +96,11 @@
             </div>
             <button class="primary-button full-width" id="processBtn">Process selected pair</button>
             <div class="notice" id="analysisNotice">No observations selected. Add a prepared GeoTIFF or connect the optional Earthdata service.</div>
+            <div id="previewCard" class="stream-preview-card" style="display:none; margin-top: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 10px;">
+              <div class="section-label" id="previewTitle" style="margin-top:0;">Derived Radar Preview</div>
+              <img id="streamPreviewImg" style="width: 100%; max-height: 260px; object-fit: contain; border-radius: 4px; border: 1px solid #444; background: #0c1015; display: block; margin: 6px 0;" alt="Derived SAR preview" />
+              <div id="previewMeta" class="help-text" style="font-size: 11px; margin-bottom: 0;"></div>
+            </div>
             <div class="section-label">Output layers</div>
             <label class="check-row"><input type="checkbox" id="changeLayerToggle" checked disabled /> Potential change mask <span class="muted">unavailable</span></label>
             <label class="check-row"><input type="checkbox" id="differenceLayerToggle" disabled /> Difference raster <span class="muted">unavailable</span></label>
@@ -127,6 +132,6 @@
       <footer class="status-bar"><span id="cursorPosition">Cursor: —</span><span id="mapScale">Scale: —</span><span>Projection: EPSG:3857</span><span id="activeLayerStatus">Active layer: none</span><span id="studyAreaStatus">Study area: not set</span><span class="status-spacer"></span><span id="processingStatus">Ready</span></footer>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/ol@10.6.1/dist/ol.js"></script>
-    <script src="script.js?v=gis1"></script>
+    <script src="script.js?v=gis2"></script>
   </body>
 </html>

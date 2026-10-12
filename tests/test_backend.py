@@ -38,6 +38,36 @@ def test_health_and_collection_endpoints() -> None:
     assert collections[0]["short_name"] == "NISAR_L2_GCOV_PROVISIONAL_V1"
 
 
+def test_openeo_status_is_safe_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("OPENEO_URL", raising=False)
+    response = TestClient(backend.app).get("/api/openeo/status")
+    assert response.status_code == 200
+    assert response.json() == {"configured": False, "url": None, "auth": "oidc"}
+
+
+def test_openeo_change_submits_validated_request(monkeypatch) -> None:
+    captured = {}
+
+    def fake_submit(**kwargs):
+        captured.update(kwargs)
+        return {"job_id": "job-1", "status": "submitted"}
+
+    monkeypatch.setattr(backend, "submit_change_job", fake_submit)
+    response = TestClient(backend.app).post(
+        "/api/openeo/change",
+        json={
+            "collection_id": "NISAR_GCOV",
+            "before": "2026-01-01T00:00:00Z",
+            "after": "2026-01-02T00:00:00Z",
+            "bbox": {"west": 88, "south": 20, "east": 92, "north": 27},
+            "bands": ["HHHH"],
+        },
+    )
+    assert response.status_code == 200
+    assert captured["collection_id"] == "NISAR_GCOV"
+    assert captured["bbox"] == (88.0, 20.0, 92.0, 27.0)
+
+
 def test_search_normalizes_realistic_granule(monkeypatch) -> None:
     monkeypatch.setattr(backend, "discover_gcov", lambda **_: [FakeGranule()])
     client = TestClient(backend.app)

@@ -110,7 +110,43 @@ def _scalar_attributes(item: Any) -> dict[str, Any]:
     }
 
 
-def _discover_georeferencing(product: Any) -> dict[str, Any]:
+def _discover_georeferencing(product: Any, frequency: str = "frequencyA") -> dict[str, Any]:
+    # Check standard grids location directly first to avoid slow recursive traversal over remote file
+    for freq in (frequency, frequency.lower(), frequency.upper(), "frequencyA", "frequencyB"):
+        for root in (f"/science/LSAR/GCOV/grids/{freq}", f"science/LSAR/GCOV/grids/{freq}"):
+            if root in product:
+                group = product[root]
+                if "xCoordinates" in group and "yCoordinates" in group:
+                    x_item = group["xCoordinates"]
+                    y_item = group["yCoordinates"]
+                    x_shape = list(getattr(x_item, "shape", []))
+                    y_shape = list(getattr(y_item, "shape", []))
+                    x_range = [_json_value(x_item[0]), _json_value(x_item[-1])] if x_shape else None
+                    y_range = [_json_value(y_item[0]), _json_value(y_item[-1])] if y_shape else None
+                    coordinates = {
+                        "xCoordinates": {"path": f"{root}/xCoordinates", "shape": x_shape, "range": x_range},
+                        "yCoordinates": {"path": f"{root}/yCoordinates", "shape": y_shape, "range": y_range},
+                    }
+                    projection: dict[str, Any] = {}
+                    for item_to_check in [group.get("projection"), group]:
+                        if item_to_check is not None:
+                            attrs = _scalar_attributes(item_to_check)
+                            for k, v in attrs.items():
+                                norm = k.lower()
+                                if "epsg" in norm or "projection" in norm or norm in {"spatial_ref", "crs", "proj4"}:
+                                    projection[k] = v
+                    res: dict[str, Any] = {"coordinates": coordinates}
+                    if projection:
+                        res["projection_attributes"] = projection
+                    if x_range and y_range:
+                        res["bounds"] = {
+                            "xmin": min(x_range),
+                            "ymin": min(y_range),
+                            "xmax": max(x_range),
+                            "ymax": max(y_range),
+                        }
+                    return res
+
     coordinates: dict[str, Any] = {}
     projection: dict[str, Any] = {}
 
@@ -154,6 +190,26 @@ def _discover_georeferencing(product: Any) -> dict[str, Any]:
 
 
 def _candidate_paths(product: Any, frequency: str = "frequencyA", polarization: str = "HH") -> list[str]:
+    pol_variants = [
+        f"{polarization.upper()}{polarization.upper()}",
+        polarization.upper(),
+        f"{polarization.lower()}{polarization.lower()}",
+        polarization.lower(),
+    ]
+    for freq_variant in (frequency, frequency.lower(), frequency.upper()):
+        for root in (
+            f"/science/LSAR/GCOV/grids/{freq_variant}",
+            f"science/LSAR/GCOV/grids/{freq_variant}",
+        ):
+            if root in product:
+                group = product[root]
+                for pol in pol_variants:
+                    if pol in group:
+                        target = f"{root}/{pol}"
+                        item = product[target]
+                        if hasattr(item, "shape") and len(item.shape) >= 2:
+                            return [target if target.startswith("/") else f"/{target}"]
+
     candidates: list[str] = []
 
     def visit(name: str, item: Any) -> None:
@@ -197,18 +253,8 @@ def _read_overview(dataset: Any) -> tuple[np.ndarray, dict[str, Any]]:
 def _read_power_overview(dataset: Any) -> tuple[np.ndarray, dict[str, Any]]:
     height, width = dataset.shape[-2], dataset.shape[-1]
     stride = max(1, math.ceil(math.sqrt((height * width) / MAX_PIXELS)))
-    sampled_height = height // stride
-    sampled_width = width // stride
-    if stride == 1:
-        power = np.asarray(dataset[:sampled_height, :sampled_width], dtype=np.float32)
-    else:
-        window = np.asarray(
-            dataset[: sampled_height * stride, : sampled_width * stride],
-            dtype=np.float32,
-        )
-        power = window.reshape(sampled_height, stride, sampled_width, stride).mean(
-            axis=(1, 3), dtype=np.float32
-        )
+    # Subsample with stride directly to avoid reading entire multi-gigabyte dataset over remote connection
+    power = np.asarray(dataset[::stride, ::stride], dtype=np.float32)
     valid = np.isfinite(power) & (power > 0)
     return power, {
         "shape": list(dataset.shape),
@@ -270,21 +316,22 @@ def _read_power_window(dataset: Any, y_slice: slice, x_slice: slice) -> tuple[np
         height,
         width,
     )
-    sampled_height = max(1, height // stride)
-    sampled_width = max(1, width // stride)
-    window = np.asarray(
-        dataset[
-            y_slice.start : y_slice.start + sampled_height * stride,
-            x_slice.start : x_slice.start + sampled_width * stride,
-        ],
-        dtype=np.float32,
-    )
     if stride > 1:
-        power = window.reshape(sampled_height, stride, sampled_width, stride).mean(
-            axis=(1, 3), dtype=np.float32
+        power = np.asarray(
+            dataset[
+                y_slice.start : y_slice.stop : stride,
+                x_slice.start : x_slice.stop : stride,
+            ],
+            dtype=np.float32,
         )
     else:
-        power = window
+        power = np.asarray(
+            dataset[
+                y_slice.start : y_slice.stop,
+                x_slice.start : x_slice.stop,
+            ],
+            dtype=np.float32,
+        )
     valid = np.isfinite(power) & (power > 0)
     if not np.any(valid):
         raise ValueError("selected AOI contains no positive finite power samples")
@@ -330,7 +377,7 @@ def _open_dataset_overview(
                 power, details = _read_power_window(dataset, y_slice, x_slice)
             details["dataset_paths"] = paths
             details["selected_dataset"] = paths[0]
-            details["georeferencing"] = _discover_georeferencing(product)
+            details["georeferencing"] = _discover_georeferencing(product, frequency=frequency)
             details["aoi"] = aoi_details
             if aoi_details:
                 details["georeferencing"]["bounds"] = {
@@ -339,6 +386,7 @@ def _open_dataset_overview(
                     "xmax": max(aoi_details["x_range"]),
                     "ymax": max(aoi_details["y_range"]),
                 }
+                details["georeferencing"].setdefault("projection_attributes", {})["epsg"] = aoi_details["epsg"]
             return power, details, counter.bytes_read
     finally:
         counter.close()
@@ -475,7 +523,7 @@ def stream_granule(
                 image[valid] = np.clip((db[valid] - low) / max(high - low, 1e-6) * 255, 0, 255).astype(np.uint8)
                 details["db_percentiles"] = [float(low), float(high)]
             details["aoi"] = aoi_details
-            georeferencing = _discover_georeferencing(product)
+            georeferencing = _discover_georeferencing(product, frequency=frequency)
             if aoi_details:
                 georeferencing["bounds"] = {
                     "xmin": min(aoi_details["x_range"]),
@@ -483,7 +531,7 @@ def stream_granule(
                     "xmax": max(aoi_details["x_range"]),
                     "ymax": max(aoi_details["y_range"]),
                 }
-            product.visititems(visit_coordinates)
+                georeferencing.setdefault("projection_attributes", {})["epsg"] = aoi_details["epsg"]
             attributes = {
                 key: _json_value(value)
                 for key, value in product[dataset_path].attrs.items()

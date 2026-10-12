@@ -99,12 +99,24 @@ The frontend now includes a desktop-style GIS workspace in
 overlay engine with an attributed OpenStreetMap fallback basemap. A public
 Mapbox access token can be set as `mapboxToken` in
 [static/config.js](./static/config.js) to enable the Mapbox satellite basemap
-toggle; NISAR layers remain OpenLayers image layers.
+toggle; NISAR layers remain OpenLayers image layers. The frontend uses the
+Mapbox token format documented by
+[`@mapbox/parse-mapbox-token`](https://github.com/mapbox/parse-mapbox-token) to
+reject malformed, secret (`sk`), or expired tokens before constructing tile
+requests. Parsing is local-only and does not log or transmit the token.
 The workspace includes a layer manager, study-area controls, map navigation,
 local GeoJSON loading, honest empty states for live NISAR observations, and a
 client-side image comparison drawer. GeoTIFF/HDF5 scientific layers are not
 silently treated as ordinary images: they require georeferenced processing or
 an API/backend.
+
+An optional openEO adapter is available through `/api/openeo/status` and
+`/api/openeo/change`. Set `OPENEO_URL` to enable it, and provide either
+`OPENEO_TOKEN`, `OPENEO_USERNAME` plus `OPENEO_PASSWORD`, or interactive OIDC
+authentication. The adapter submits a standard two-date subtraction process
+graph as a batch job; it does not expose credentials to the browser and does
+not replace the bounded NASA/ASF streaming endpoints. The configured openEO
+backend must provide the requested collection and compatible bands.
 
 The [backend.py](./backend.py) service now provides real Earthdata metadata
 search endpoints and a bounded streaming-preprocessing boundary. Complete

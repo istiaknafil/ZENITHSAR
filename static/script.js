@@ -4,11 +4,39 @@
   const apiBase = window.EARTH_CHANGE_CONFIG?.apiBase || '';
   let observations = [];
 
+  function parseMapboxToken(token) {
+    const parts = token.split('.');
+    if (parts.length < 2 || !parts[1]) throw new Error('Invalid Mapbox token');
+    const encoded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(decodeURIComponent(
+      Array.from(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')))
+        .map((character) => `%${character.charCodeAt(0).toString(16).padStart(2, '0')}`)
+        .join(''),
+    ));
+    return {
+      usage: parts[0],
+      user: payload.u,
+      expires: payload.exp ? payload.exp * 1000 : null,
+      scopes: Array.isArray(payload.scopes) ? payload.scopes : [],
+    };
+  }
+
+  function usableMapboxToken(token) {
+    try {
+      const parsed = parseMapboxToken(token);
+      return parsed.usage === 'pk' && Boolean(parsed.user)
+        && (!parsed.expires || parsed.expires > Date.now());
+    } catch {
+      return false;
+    }
+  }
+
   const osmLayer = new ol.layer.Tile({
     source: new ol.source.OSM({ attributions: '© OpenStreetMap contributors' }),
     properties: { key: 'osm-basemap', name: 'OpenStreetMap basemap', kind: 'basemap' },
   });
-  const mapboxToken = window.EARTH_CHANGE_CONFIG?.mapboxToken || '';
+  const configuredMapboxToken = window.EARTH_CHANGE_CONFIG?.mapboxToken || '';
+  const mapboxToken = usableMapboxToken(configuredMapboxToken) ? configuredMapboxToken : '';
   const mapboxLayer = mapboxToken ? new ol.layer.Tile({
     source: new ol.source.XYZ({
       url: `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/512/{z}/{x}/{y}?access_token=${encodeURIComponent(mapboxToken)}`,
@@ -82,12 +110,30 @@
     if (selectedLayer) setActiveLayer(selectedLayer);
   }
 
-  function addDerivedChangeLayer(result) {
-    const georeferencing = result.before?.georeferencing;
+  function addDerivedChangeLayer(result, isPair = true) {
+    const georeferencing = isPair ? result.before?.georeferencing : (result.georeferencing || result.details?.georeferencing);
     const bounds = georeferencing?.bounds;
     const projectionAttribute = georeferencing?.projection_attributes || {};
-    const epsgValue = Object.entries(projectionAttribute).find(([key]) => key.toLowerCase().includes('epsg'))?.[1];
+    const epsgValue = projectionAttribute.epsg || Object.entries(projectionAttribute).find(([key]) => key.toLowerCase().includes('epsg'))?.[1];
     const epsg = Number(epsgValue);
+    const previewUrl = `${apiBase}/${result.preview}`;
+
+    const card = $('previewCard');
+    const img = $('streamPreviewImg');
+    const title = $('previewTitle');
+    const meta = $('previewMeta');
+    if (card && img) {
+      card.style.display = 'block';
+      img.src = previewUrl;
+      if (isPair) {
+        title.textContent = `Candidate Change Map (±${result.threshold_db} dB)`;
+        meta.textContent = `${result.changed_percent.toFixed(2)}% changed · ${result.valid_pixels?.toLocaleString?.() || 'N/A'} valid px · ${result.before_product_id?.slice?.(0, 35) || ''}…`;
+      } else {
+        title.textContent = `Streamed Radar Backscatter (${result.frequency || 'freqA'} ${result.polarization || 'HH'})`;
+        meta.textContent = `Product: ${result.product_id} · ${((result.bytes_read || 0) / (1024 * 1024)).toFixed(2)} MB stream`;
+      }
+    }
+
     if (!bounds || !Number.isFinite(epsg)) {
       return false;
     }
@@ -103,7 +149,9 @@
       console.warn('Could not transform derived NISAR extent', error);
       return false;
     }
-    const key = `change-${result.before_product_id}-${result.after_product_id}`;
+    const key = isPair
+      ? `change-${result.before_product_id}-${result.after_product_id}`
+      : `stream-${result.product_id}`;
     const existing = layers.find(({ layer }) => layer.get('key') === key);
     if (existing) {
       existing.layer.setVisible(true);
@@ -112,14 +160,16 @@
     }
     const imageLayer = new ol.layer.Image({
       source: new ol.source.ImageStatic({
-        url: `${apiBase}/${result.preview}`,
+        url: previewUrl,
         projection: 'EPSG:3857',
         imageExtent: extent,
       }),
-      opacity: 0.8,
+      opacity: 0.85,
       properties: {
         key,
-        name: `NISAR candidate change: ${result.before_product_id} → ${result.after_product_id}`,
+        name: isPair
+          ? `NISAR candidate change: ${result.before_product_id} → ${result.after_product_id}`
+          : `NISAR stream: ${result.product_id}`,
         kind: 'change',
         metadata: result,
       },
@@ -181,6 +231,17 @@
     return body;
   }
 
+  function updateProcessButtonLabel() {
+    const selected = [$('earlierSelect').value, $('laterSelect').value].filter(Boolean);
+    if (selected.length === 2) {
+      $('processBtn').textContent = 'Process selected pair';
+    } else if (selected.length === 1) {
+      $('processBtn').textContent = 'Stream selected preview';
+    } else {
+      $('processBtn').textContent = 'Process selected pair';
+    }
+  }
+
   function renderObservationList() {
     const list = $('observationList');
     if (!observations.length) {
@@ -200,6 +261,7 @@
         if (!earlier.value) earlier.value = observation.id;
         else if (!later.value && earlier.value !== observation.id) later.value = observation.id;
         else earlier.value = observation.id;
+        updateProcessButtonLabel();
         $('metadataList').innerHTML = `<dt>Product</dt><dd>${observation.product_id}</dd><dt>Acquisition</dt><dd>${observation.acquisition_start || 'Unknown'}</dd><dt>Collection</dt><dd>${observation.collection}</dd><dt>Maturity</dt><dd>${observation.collection.includes('BETA') ? 'BETA' : 'PROVISIONAL'}</dd><dt>Estimated size</dt><dd>${observation.size_mb?.toFixed?.(1) || 'Unknown'} MB</dd><dt>Source</dt><dd>${observation.source}</dd>`;
         activateTab('metadata');
       });
@@ -267,6 +329,9 @@
   }
   $('refreshBtn').addEventListener('click', refreshObservations);
   $('searchCatalogBtn').addEventListener('click', refreshObservations);
+  $('earlierSelect').addEventListener('change', updateProcessButtonLabel);
+  $('laterSelect').addEventListener('change', updateProcessButtonLabel);
+
   $('processBtn').addEventListener('click', async () => {
     const selected = [$('earlierSelect').value, $('laterSelect').value].filter(Boolean);
     if (!selected.length) {
@@ -274,7 +339,11 @@
       status('Streaming not started: no observation selected');
       return;
     }
-    status('Streaming selected GCOV preview…');
+    const isPair = selected.length === 2;
+    $('processBtn').disabled = true;
+    $('processBtn').textContent = isPair ? 'Streaming & computing candidate change…' : 'Streaming remote GCOV preview…';
+    status(isPair ? 'Streaming NISAR pair from NASA/ASF…' : 'Streaming selected GCOV preview…');
+    $('analysisNotice').innerHTML = `<em>Contacting NASA/ASF remote archive via earthaccess… reading calibrated backscatter without downloading full product.</em>`;
     try {
       const params = new URLSearchParams({
         frequency: $('frequencySelect').value || 'frequencyA',
@@ -285,7 +354,7 @@
       if (bboxValues.length === 4 && bboxValues.every(Number.isFinite)) {
         ['west', 'south', 'east', 'north'].forEach((key, index) => params.set(key, bboxValues[index]));
       }
-      const endpoint = selected.length === 2 ? '/api/earthdata/change' : '/api/earthdata/stream';
+      const endpoint = isPair ? '/api/earthdata/change' : '/api/earthdata/stream';
       const response = await fetch(`${apiBase}${endpoint}?${params}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -293,19 +362,34 @@
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      if (selected.length === 2) {
+      if (isPair) {
         const result = payload.result;
-        const mapped = addDerivedChangeLayer(result);
-        $('analysisNotice').innerHTML = `Candidate change calculated: ${result.changed_percent.toFixed(2)}% of valid sampled pixels changed at ±${result.threshold_db} dB. <a href="${apiBase}/${result.preview}" target="_blank" rel="noopener">Open derived preview</a>${mapped ? ' · Added to map' : ''}<br><small>${result.warning}</small>`;
+        const mapped = addDerivedChangeLayer(result, true);
+        $('analysisNotice').innerHTML = `Candidate change calculated: <strong>${result.changed_percent.toFixed(2)}%</strong> of valid sampled pixels changed at ±${result.threshold_db} dB. <a href="${apiBase}/${result.preview}" target="_blank" rel="noopener">Open image directly</a>${mapped ? ' · Added to GIS map' : ''}<br><small>${result.warning}</small>`;
         status(`Change calculated · ${result.changed_pixels.toLocaleString()} candidate pixels`);
+        $('changeLayerToggle').disabled = false;
+        $('changeLayerToggle').checked = true;
       } else {
+        const granuleResult = payload.granules?.[0];
         const bytes = payload.granules.reduce((total, item) => total + (item.bytes_read || 0), 0);
-        $('analysisNotice').textContent = `Streaming complete. Read approximately ${(bytes / 1_000_000).toFixed(2)} MB and wrote derived previews only.`;
-        status(`Streaming complete · ${payload.count} preview(s)`);
+        let mapped = false;
+        if (granuleResult) {
+          mapped = addDerivedChangeLayer(granuleResult, false);
+        }
+        $('analysisNotice').innerHTML = `Streamed preview generated: read ${(bytes / (1024 * 1024)).toFixed(2)} MB. <a href="${apiBase}/${granuleResult?.preview}" target="_blank" rel="noopener">Open image directly</a>${mapped ? ' · Added to GIS map' : ''}`;
+        status(`Streaming complete · ${(bytes / (1024 * 1024)).toFixed(2)} MB read`);
       }
     } catch (error) {
-      $('analysisNotice').textContent = `Streaming unavailable: ${error.message}`;
+      const msg = error.message;
+      let userAdvice = '';
+      if (msg.includes('different coordinate bounds') || msg.includes('different processing maturity')) {
+        userAdvice = '<br><span style="color:#d6b36a;">💡 <strong>Tip for change detection:</strong> Select two acquisitions that cover the same satellite track/frame (or draw a bounding box using the ▣ tool on the map to define a common Area of Interest).</span>';
+      }
+      $('analysisNotice').innerHTML = `<span style="color:#ff7575;">Streaming error:</span> ${msg}${userAdvice}`;
       status('Streaming failed');
+    } finally {
+      $('processBtn').disabled = false;
+      updateProcessButtonLabel();
     }
   });
   $('layerOpacity').addEventListener('input', (event) => { selectedLayer.setOpacity(Number(event.target.value) / 100); });
@@ -316,10 +400,24 @@
       status('Use latitude, longitude, zoom');
       return;
     }
-    map.getView().setCenter(ol.proj.fromLonLat([values[1], values[0]]));
+    const lat = values[0];
+    const lon = values[1];
+    map.getView().setCenter(ol.proj.fromLonLat([lon, lat]));
     map.getView().setZoom(Math.max(1, Math.min(20, values[2])));
-    $('studyAreaStatus').textContent = `Study area: ${values[0].toFixed(4)}, ${values[1].toFixed(4)}`;
-    status('Study area centered');
+
+    const delta = 0.15;
+    const west = (lon - delta).toFixed(4);
+    const south = (lat - delta).toFixed(4);
+    const east = (lon + delta).toFixed(4);
+    const north = (lat + delta).toFixed(4);
+    $('bboxInput').value = `${west},${south},${east},${north}`;
+
+    studySource.clear();
+    const boxExtent = ol.proj.transformExtent([lon - delta, lat - delta, lon + delta, lat + delta], 'EPSG:4326', 'EPSG:3857');
+    studySource.addFeature(new ol.Feature(ol.geom.Polygon.fromExtent(boxExtent)));
+
+    $('studyAreaStatus').textContent = `Study area: ${lat.toFixed(4)}, ${lon.toFixed(4)} (AOI box ready)`;
+    status('Study area & AOI box ready for catalog search');
   }
   $('zoomStudyBtn').addEventListener('click', zoomToInput);
   $('studyAreaInput').addEventListener('keydown', (event) => { if (event.key === 'Enter') zoomToInput(); });
